@@ -162,6 +162,7 @@ Import data with the scripts in `scripts/`:
 - `import_project_presence.py`: import project-level presence/absence data.
 - `import_sample_presence.py`: import sample-level presence/absence data.
 - `import_variants.py`: import variant annotations.
+- `import_botloci.py`: import `.botloci` bottom-strand locus lookup files.
 - `detect_variants.py`: detect variants from sequence data.
 
 See each script's help output for supported arguments:
