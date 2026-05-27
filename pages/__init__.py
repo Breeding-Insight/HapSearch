@@ -1,0 +1,1 @@
+"""Haplosearch pages module"""

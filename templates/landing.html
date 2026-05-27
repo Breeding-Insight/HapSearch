@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HapSearch - Microhaplotype Analysis Platform</title>
+    <link rel="icon" type="image/png" href="/static/HaploSearch_favicon_2.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-blue: #245842;
+            --dark-blue: #004499;
+            --light-bg: #f8f9fa;
+            /* Muted text should be black (no gray anywhere) */
+            --text-muted: #000000;
+            --orcid-green: #A6CE39;
+            --orcid-green-dark: #8fb82e;
+        }
+
+        /* Override Bootstrap muted text color so it's black instead of gray */
+        .text-muted {
+            color: var(--text-muted) !important;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #ffffff;
+            min-height: 100vh;
+        }
+
+        /* Hero Section */
+        .hero-section {
+            padding: 40px 0;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+        }
+
+        .hero-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 40px;
+        }
+
+        .hero-left {
+            flex: 1;
+        }
+
+        .hero-title-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero-icon {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            min-width: 4rem;
+            min-height: 4rem;
+        }
+        
+        .hero-icon img {
+            height: 4rem;
+            width: auto;
+            border-radius: 12px;
+            display: block;
+        }
+
+        .hero-title {
+            font-size: 2.25rem;
+            font-weight: 400;
+            color: #212529;
+            margin: 0;
+        }
+
+        .hero-subtitle {
+            font-size: 1rem;
+            color: var(--text-muted);
+            margin: 0;
+        }
+
+        .hero-right {
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 768px) {
+            .hero-content {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .hero-title-row {
+                justify-content: center;
+            }
+
+            .hero-title {
+                font-size: 2rem;
+            }
+        }
+
+        /* ORCID Button - Official Styling */
+        .btn-orcid-hero {
+            background-color: var(--orcid-green);
+            border-color: var(--orcid-green);
+            color: #fff;
+            font-weight: 600;
+            font-size: 1.25rem;
+            padding: 18px 50px;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            box-shadow: 0 2px 8px rgba(166, 206, 57, 0.3);
+        }
+
+        .btn-orcid-hero:hover {
+            background-color: var(--orcid-green-dark);
+            border-color: var(--orcid-green-dark);
+            color: #fff;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(166, 206, 57, 0.4);
+        }
+
+        .btn-orcid-hero img {
+            height: 32px;
+            margin-right: 12px;
+        }
+
+        .btn-go-to-app {
+            background-color: var(--orcid-green);
+            border-color: var(--orcid-green);
+            color: #fff;
+            font-weight: 600;
+            font-size: 1.25rem;
+            padding: 18px 50px;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px rgba(166, 206, 57, 0.3);
+        }
+
+        .btn-go-to-app:hover {
+            background-color: var(--orcid-green-dark);
+            border-color: var(--orcid-green-dark);
+            color: #fff;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(166, 206, 57, 0.4);
+        }
+
+        /* Features Section */
+        .features-section {
+            padding: 40px 0;
+            background: linear-gradient(to bottom, #c0d9c0 0%, #d8ead8 100%);
+            border-top: 2px solid #dee2e6;
+        }
+
+        .feature-card {
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            background-color: #ffffff;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 16px rgba(36, 88, 66, 0.1);
+            border-color: var(--primary-blue);
+        }
+
+        .feature-icon {
+            font-size: 2rem;
+            color: var(--primary-blue);
+            margin-bottom: 1rem;
+        }
+
+        .feature-image {
+            width: 100%;
+            max-width: 100%;
+            max-height: 220px;
+            height: auto;
+            object-fit: contain;
+            border-radius: 8px;
+            display: block;
+            margin: 0 auto;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            background-color: #f8f9fa;
+            padding: 8px;
+        }
+
+        .feature-card:hover .feature-image {
+            transform: scale(1.02);
+            box-shadow: 0 4px 12px rgba(36, 88, 66, 0.15);
+        }
+
+        .feature-image-container {
+            margin-bottom: 0;
+            overflow: hidden;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 0;
+        }
+
+        .feature-stack {
+            height: 100%;
+            justify-content: center;
+            gap: 1.5rem;
+        }
+
+        /* Resources Section */
+        .resources-section {
+            padding: 40px 0;
+            background: linear-gradient(to bottom, #d8ead8 0%, #f0f7f0 100%);
+        }
+
+        .resource-card {
+            border: none;
+            border-radius: 8px;
+            background-color: #ffffff;
+            transition: transform 0.2s ease;
+            height: 100%;
+            text-align: center;
+        }
+
+        .resource-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        .resource-logo {
+            height: 60px;
+            width: auto;
+            max-width: 180px;
+            margin: 0 auto 1rem;
+            object-fit: contain;
+        }
+
+        .resource-logo-placeholder {
+            height: 60px;
+            width: auto;
+            max-width: 180px;
+            background-color: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            padding: 10px 15px;
+            text-align: center;
+            margin: 0 auto 1rem;
+        }
+
+        .env-badge {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 1000;
+        }
+
+        body {
+            position: relative;
+        }
+
+        footer {
+            padding: 40px 0;
+            background-color: #ffffff;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .footer-logos {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 40px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .footer-logo-placeholder {
+            height: 50px;
+            width: auto;
+            max-width: 180px;
+            background-color: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            padding: 8px 18px;
+            text-align: center;
+        }
+
+        .footer-logo-placeholder.uf {
+            min-width: 160px;
+        }
+
+        .footer-logo-placeholder.bi {
+            min-width: 180px;
+        }
+
+        .footer-text {
+            text-align: center;
+            color: var(--text-muted);
+            margin-top: 20px;
+        }
+
+        /* Compact spacing */
+        .section-title {
+            color: #212529;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Resources Carousel */
+        .resources-carousel-container {
+            position: relative;
+            padding: 0 50px;
+        }
+
+        .resources-carousel-wrapper {
+            overflow: hidden;
+            position: relative;
+        }
+
+        .resources-carousel-track {
+            display: flex;
+            transition: transform 0.5s ease;
+            gap: 1rem;
+        }
+
+        .resources-carousel-item {
+            flex: 0 0 calc(25% - 0.75rem);
+            min-width: 0;
+        }
+
+        .carousel-nav-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background-color: #ffffff;
+            border: 2px solid #dee2e6;
+            border-radius: 50%;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .carousel-nav-btn:hover {
+            background-color: var(--primary-blue);
+            border-color: var(--primary-blue);
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(36, 88, 66, 0.3);
+        }
+
+        .carousel-nav-btn.prev {
+            left: 0;
+        }
+
+        .carousel-nav-btn.next {
+            right: 0;
+        }
+
+        .carousel-nav-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        @media (max-width: 1200px) {
+            .resources-carousel-item {
+                flex: 0 0 calc(33.333% - 0.67rem);
+            }
+        }
+
+        @media (max-width: 768px) {
+            .resources-carousel-item {
+                flex: 0 0 calc(50% - 0.5rem);
+            }
+            .resources-carousel-container {
+                padding: 0 40px;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .resources-carousel-item {
+                flex: 0 0 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    {% if app_env == 'development' %}
+    <span class="badge bg-warning text-dark env-badge">
+        <i class="fas fa-flask me-1"></i> Sandbox / Development
+    </span>
+    {% endif %}
+
+    <!-- Hero Section -->
+    <section class="hero-section">
+        <div class="container">
+            <div class="hero-content">
+                <div class="hero-left">
+                    <div class="hero-title-row">
+                        <div class="hero-icon">
+                            <img src="/static/HaploSearch_logo_main_2.png" alt="HapSearch" loading="eager" fetchpriority="high">
+                        </div>
+                        <h1 class="hero-title">
+                            <span style="font-weight: 700;">Hap</span>Search
+                        </h1>
+                    </div>
+                    <p class="hero-subtitle">
+                        Browse, search, and analyze
+                        microhaplotype data across species and projects.
+                    </p>
+                </div>
+                <div class="hero-right">
+                    {% if user %}
+                    <a href="/app/" class="btn btn-go-to-app">
+                        <i class="fas fa-arrow-right me-2"></i>Go to App
+                    </a>
+                    {% else %}
+                    <a href="/auth/login" class="btn btn-orcid-hero">
+                        <img src="/static/ORCID-iD_icon_vector.svg" alt="ORCID">
+                        Sign in with ORCID iD
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features-section">
+        <div class="container">
+            <div class="row g-4 mb-4">
+                <div class="col-md-5 d-flex align-items-stretch">
+                    <div class="p-1 p-md-3">
+                        <h2 style="color: #212529; font-size: 1.75rem; font-weight: 700; margin-bottom: 1rem;">About Microhaplotypes</h2>
+                        <p style="color: #212529; line-height: 1.7; font-size: 1rem; font-weight: 400; margin-bottom: 1rem;">
+                            Microhaplotypes are short genomic segments (typically 54-109 bp) containing two or more closely spaced variants that are inherited together as a single unit. Unlike single SNPs which are bi-allelic, microhaplotypes are multi-allelic markers that provide significantly higher information content for diversity analysis, QTL discovery, and genomic selection in plant breeding.
+                        </p>
+                        <p style="color: #212529; line-height: 1.7; font-size: 1rem; font-weight: 400; margin-bottom: 1rem;">
+                            Because the SNPs within a microhaplotype are sequenced together in the same short read, their phase is directly observed, making them highly informative, phase-known markers. This multi-allelic nature and strong linkage make microhaplotypes especially powerful for characterizing germplasm, where unique and trait-associated microhaplotypes can be tracked within and across breeding populations to inform designing crosses.
+                        </p>
+                        <h3 style="color: #212529; font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem;">HapSearch Platform</h3>
+                        <p style="color: #212529; line-height: 1.7; font-size: 1rem; font-weight: 400; margin: 0;">
+                            HapSearch centralizes fragmented microhaplotype data generated from the DArTag targeted genotyping platform across multiple breeding programs. The platform enables targeted mining of alleles of interest by crop species, sequence similarity, and project-specific keywords, with integrated filters to narrow results to specific loci. It also provides multiple sequence alignment views to display locus-level variation and help users identify accessions carrying unique microhaplotype alleles, while connecting sequence-level information to breeding projects and genotypes for marker evaluation and decision support. By improving data discoverability and cross-project visibility, HapSearch supports collaboration and resource exchange across breeding and research communities.
+                        </p>
+                    </div>
+                </div>
+                <div class="col-md-7">
+                    <div class="d-flex flex-column feature-stack">
+                        <div class="card feature-card">
+                            <div class="card-body p-4">
+                                <h5 class="card-title mb-4" style="color: #212529; font-size: 1.25rem; font-weight: 600; text-align: left;">
+                                    Explore Haplotypes
+                                    <br>
+                                    <span style="font-weight: 400; font-size: 1rem; color: #495057;">Search and browse microhaplotypes by marker, sequence, or chromosome. View frequency statistics, genotype associations, and connect with projects holding specific alleles.</span>
+                                </h5>
+                                <div class="feature-image-container">
+                                    <img src="/static/HaploExplorer-5.png" 
+                                         alt="Haplotype Explorer Interface" 
+                                         class="feature-image"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                    <div class="feature-icon text-center" style="display: none;">
+                                        <i class="fas fa-search"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card feature-card">
+                            <div class="card-body p-4">
+                                <h5 class="card-title mb-4" style="color: #212529; font-size: 1.25rem; font-weight: 600; text-align: left;">
+                                    Multiple Sequence Alignment
+                                    <br>
+                                    <span style="font-weight: 400; font-size: 1rem; color: #495057;">Visualize marker-level alignments with color-coded nucleotides and variant annotations. Inspect target SNPs and evaluate marker quality for breeding workflows.</span>
+                                </h5>
+                                <div class="feature-image-container">
+                                    <img src="/static/msa_visualization.png" 
+                                         alt="Multiple Sequence Alignment Visualization" 
+                                         class="feature-image"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                    <div class="feature-icon text-center" style="display: none;">
+                                        <i class="fas fa-align-left"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Resources Section -->
+    <section class="resources-section">
+        <div class="container">
+            <h3 class="section-title text-center mb-4">Breeding Insight Resources</h3>
+            <div class="resources-carousel-container">
+                <button class="carousel-nav-btn prev" onclick="moveCarousel(-1)" aria-label="Previous">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <div class="resources-carousel-wrapper">
+                    <div class="resources-carousel-track" id="resourcesCarousel">
+                        <div class="resources-carousel-item">
+                            <div class="card resource-card">
+                                <div class="card-body p-4">
+                                    <img src="/static/BreedingInsightLogo-RGB-1600px.png" 
+                                         alt="Breeding Insight Logo" 
+                                         class="resource-logo"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                    <div class="resource-logo-placeholder" style="display: none;">
+                                        <i class="fas fa-seedling me-2"></i>BI Logo
+                                    </div>
+                                    <h6 class="card-title">Learning Hub</h6>
+                                    <p class="card-text text-muted small mb-3">
+                                        Access training materials and documentation
+                                    </p>
+                                    <a href="https://breedinginsight.org/learning-hub/" target="_blank" class="btn btn-sm btn-outline-primary">
+                                        Visit Hub <i class="fas fa-external-link-alt ms-1"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="resources-carousel-item">
+                            <div class="card resource-card">
+                                <div class="card-body p-4">
+                                    <img src="/static/bigapp_new_logo.png" 
+                                         alt="BIGapp Logo" 
+                                         class="resource-logo"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                    <div class="resource-logo-placeholder" style="display: none;">
+                                        <i class="fas fa-dna me-2"></i>BIGapp Logo
+                                    </div>
+                                    <h6 class="card-title">BIGapp</h6>
+                                    <p class="card-text text-muted small mb-3">
+                                        Genotyping data processing application
+                                    </p>
+                                    <div class="d-flex flex-column gap-2">
+                                        <a href="https://breedinginsight.org/bigapp/" target="_blank" class="btn btn-sm btn-outline-primary">
+                                            Visit BIGapp <i class="fas fa-external-link-alt ms-1"></i>
+                                        </a>
+                                        <a href="https://acsess.onlinelibrary.wiley.com/doi/10.1002/tpg2.70067" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                            <i class="fas fa-book me-1"></i>Publication
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="resources-carousel-item">
+                            <div class="card resource-card">
+                                <div class="card-body p-4">
+                                    <img src="/static/DeltaBreed_AppIcon-WhiteLogo.png" 
+                                         alt="DeltaBreed Logo" 
+                                         class="resource-logo"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                    <div class="resource-logo-placeholder" style="display: none;">
+                                        <i class="fas fa-chart-line me-2"></i>DeltaBreed Logo
+                                    </div>
+                                    <h6 class="card-title">DeltaBreed</h6>
+                                    <p class="card-text text-muted small mb-3">
+                                        Data management software for USDA specialty crop breeding programs
+                                    </p>
+                                    <div class="d-flex flex-column gap-2">
+                                        <a href="https://app.breedinginsight.net/" target="_blank" class="btn btn-sm btn-outline-primary">
+                                            Open DeltaBreed <i class="fas fa-external-link-alt ms-1"></i>
+                                        </a>
+                                        <a href="https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0324104" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                            <i class="fas fa-book me-1"></i>Publication
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="resources-carousel-item">
+                            <div class="card resource-card">
+                                <div class="card-body p-4">
+                                    <div class="resource-icon mb-3" style="font-size: 3rem;">
+                                        <i class="fab fa-github"></i>
+                                    </div>
+                                    <h6 class="card-title">GitHub</h6>
+                                    <p class="card-text text-muted small mb-3">
+                                        Open-source code repositories and projects
+                                    </p>
+                                    <a href="https://github.com/Breeding-Insight" target="_blank" class="btn btn-sm btn-outline-primary">
+                                        View GitHub <i class="fas fa-external-link-alt ms-1"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="resources-carousel-item">
+                            <div class="card resource-card">
+                                <div class="card-body p-4">
+                                    <img src="/static/Qploidy_logo.jpg" 
+                                         alt="Qploidy Logo" 
+                                         class="resource-logo"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                    <div class="resource-logo-placeholder" style="display: none;">
+                                        <i class="fas fa-dna me-2"></i>Qploidy Logo
+                                    </div>
+                                    <h6 class="card-title">Qploidy</h6>
+                                    <p class="card-text text-muted small mb-3">
+                                        R package for ploidy estimation with array and target markers
+                                    </p>
+                                    <div class="d-flex flex-column gap-2">
+                                        <a href="https://github.com/Cristianetaniguti/qploidy" target="_blank" class="btn btn-sm btn-outline-primary">
+                                            View on GitHub <i class="fas fa-external-link-alt ms-1"></i>
+                                        </a>
+                                        <a href="https://acsess.onlinelibrary.wiley.com/doi/10.1002/tpg2.70044" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                            <i class="fas fa-book me-1"></i>Publication
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="resources-carousel-item">
+                            <div class="card resource-card">
+                                <div class="card-body p-4">
+                                    <img src="/static/BIGr_logo.png" 
+                                         alt="BIGr Logo" 
+                                         class="resource-logo"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                    <div class="resource-logo-placeholder" style="display: none;">
+                                        <i class="fas fa-chart-bar me-2"></i>BIGr Logo
+                                    </div>
+                                    <h6 class="card-title">BIGr</h6>
+                                    <p class="card-text text-muted small mb-3">
+                                        R package for a-to-z genomic analyses, GWAS, and genomic selection
+                                    </p>
+                                    <div class="d-flex flex-column gap-2">
+                                        <a href="https://github.com/Breeding-Insight/BIGr" target="_blank" class="btn btn-sm btn-outline-primary">
+                                            View on GitHub <i class="fas fa-external-link-alt ms-1"></i>
+                                        </a>
+                                        <a href="https://acsess.onlinelibrary.wiley.com/doi/10.1002/tpg2.70067" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                            <i class="fas fa-book me-1"></i>Publication
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="resources-carousel-item">
+                            <div class="card resource-card">
+                                <div class="card-body p-4">
+                                    <img src="/static/allomate.png" 
+                                         alt="AlloMate Logo" 
+                                         class="resource-logo"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                    <div class="resource-logo-placeholder" style="display: none;">
+                                        <i class="fas fa-heart me-2"></i>AlloMate Logo
+                                    </div>
+                                    <h6 class="card-title">AlloMate</h6>
+                                    <p class="card-text text-muted small mb-3">
+                                        Shiny app that simplifies mate allocation decisions for breeders
+                                    </p>
+                                    <a href="https://github.com/Breeding-Insight/AlloMate/tree/main" target="_blank" class="btn btn-sm btn-outline-primary">
+                                        View on GitHub <i class="fas fa-external-link-alt ms-1"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button class="carousel-nav-btn next" onclick="moveCarousel(1)" aria-label="Next">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-logos">
+                <img src="/static/USDAARSIdentityColor_clearBKG.png" 
+                     alt="USDA ARS Logo" 
+                     style="height: 50px; width: auto; max-width: 150px;"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div class="footer-logo-placeholder" style="display: none; min-width: 120px;">
+                    <i class="fas fa-seedling me-2"></i>USDA ARS Logo
+                </div>
+                <img src="/static/IFAS-RGB.png" 
+                     alt="UF/IFAS Logo" 
+                     style="height: 50px; width: auto; max-width: 200px;"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div class="footer-logo-placeholder uf" style="display: none;">
+                    <i class="fas fa-university me-2"></i>University of Florida / IFAS Logo
+                </div>
+                <img src="/static/BreedingInsightLogo-RGB-1600px.png" 
+                     alt="Breeding Insight Logo" 
+                     style="height: 50px; width: auto; max-width: 200px;"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div class="footer-logo-placeholder bi" style="display: none;">
+                    <i class="fas fa-seedling me-2"></i>Breeding Insight Logo
+                </div>
+            </div>
+            <div class="footer-text">
+                <small>
+                    Funded by USDA-ARS and housed at University of Florida (UF/IFAS).
+                </small>
+                <br>
+                <small style="margin-top: 0.5rem; display: block;">
+                    © 2026 Breeding Insight
+                </small>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentIndex = 0;
+        const itemsPerView = 4;
+        const totalItems = 7; // Learning Hub, BIGapp, DeltaBreed, GitHub, Qploidy, BIGr, AlloMate
+
+        function getItemsPerView() {
+            const width = window.innerWidth;
+            if (width <= 576) return 1;
+            if (width <= 768) return 2;
+            if (width <= 1200) return 3;
+            return 4;
+        }
+
+        function updateCarousel() {
+            const track = document.getElementById('resourcesCarousel');
+            if (!track || track.children.length === 0) return;
+            
+            const actualItemsPerView = getItemsPerView();
+            const itemWidth = track.children[0].offsetWidth + 16; // width + gap
+            const maxIndex = Math.max(0, totalItems - actualItemsPerView);
+            
+            // Handle looping - wrap around
+            if (currentIndex < 0) {
+                currentIndex = maxIndex;
+            } else if (currentIndex > maxIndex) {
+                currentIndex = 0;
+            }
+            
+            const translateX = -currentIndex * itemWidth;
+            track.style.transform = `translateX(${translateX}px)`;
+        }
+
+        function moveCarousel(direction) {
+            const actualItemsPerView = getItemsPerView();
+            const maxIndex = Math.max(0, totalItems - actualItemsPerView);
+            
+            currentIndex += direction;
+            
+            // Loop around
+            if (currentIndex < 0) {
+                currentIndex = maxIndex;
+            } else if (currentIndex > maxIndex) {
+                currentIndex = 0;
+            }
+            
+            updateCarousel();
+        }
+
+        // Initialize carousel on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Small delay to ensure layout is calculated
+            setTimeout(function() {
+                updateCarousel();
+            }, 100);
+            
+            // Handle window resize
+            let resizeTimer;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(function() {
+                    updateCarousel();
+                }, 250);
+            });
+        });
+    </script>
+</body>
+</html>

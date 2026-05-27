@@ -1,0 +1,53 @@
+name: haplosearch_dev_local
+
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    ports:
+      - "11433:1433"
+    env_file:
+      - .env.development.local
+    volumes:
+      - mssql_data:/var/opt/mssql
+    restart: unless-stopped
+
+  haplosearch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    depends_on:
+      - mssql
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount everything for live reload during development
+      - ./app.py:/app/app.py
+      - ./config.py:/app/config.py
+      - ./dash_app.py:/app/dash_app.py
+      - ./schema_mssql.sql:/app/schema_mssql.sql
+      - ./database:/app/database
+      - ./design:/app/design
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./assets:/app/assets
+      - ./static:/app/static
+      - ./pages:/app/pages
+      - ./auth:/app/auth
+      - ./templates:/app/templates
+      - ./alignment:/app/alignment
+    env_file:
+      - .env.development.local
+    environment:
+      - APP_ENV=local-dev
+      - DEBUG_MODE=true
+      - APP_PORT=5000
+      - MSSQL_SERVER=mssql
+      - MSSQL_PORT=1433
+      - MSSQL_DRIVER=ODBC Driver 18 for SQL Server
+      - BYPASS_ORCID_AUTH=true
+      - BYPASS_AUTH_WHITELIST=false
+    restart: unless-stopped
+
+volumes:
+  mssql_data:

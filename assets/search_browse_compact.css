@@ -1,0 +1,153 @@
+/* Compact "Search & Browse" panels (Haplotype + Marker explorers)
+   Goal: reduce visual density without browser zoom.
+*/
+
+/* Tighter card padding */
+#haplotype-filters-card .card-body,
+#marker-filters-card .card-body {
+  padding: 0.75rem !important;
+}
+
+/* Smaller labels */
+#haplotype-filters-card label,
+#marker-filters-card label {
+  font-size: 0.85rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+/* Smaller inputs (dbc.Input / Bootstrap form-control) */
+#haplotype-filters-card .form-control,
+#marker-filters-card .form-control {
+  font-size: 0.9rem !important;
+  padding: 0.25rem 0.5rem !important;
+  line-height: 1.2 !important;
+}
+
+/* Dash dcc.Dropdown (react-select v1) */
+#marker-filters-card .Select-control,
+#marker-filters-card .Select-menu-outer,
+#marker-filters-card .Select-placeholder,
+#marker-filters-card .Select-value-label,
+#marker-filters-card .Select-input > input {
+  font-size: 0.9rem !important;
+}
+
+#marker-filters-card .Select-control {
+  min-height: 32px !important;
+  height: 32px !important;
+}
+
+#marker-filters-card .Select-placeholder,
+#marker-filters-card .Select-value {
+  line-height: 30px !important;
+}
+
+/* Smaller buttons inside the filters cards */
+#haplotype-filters-card .btn,
+#marker-filters-card .btn {
+  font-size: 0.85rem !important;
+  padding: 0.2rem 0.5rem !important;
+}
+
+/* Tighten spacing between filter groups (reduce bottom margins) */
+#haplotype-filters-card .mb-3,
+#marker-filters-card .mb-3 {
+  margin-bottom: 0.6rem !important;
+}
+
+#haplotype-filters-card .mb-2,
+#marker-filters-card .mb-2 {
+  margin-bottom: 0.5rem !important;
+}
+
+/* -----------------------------
+   Results cards (left side)
+------------------------------ */
+
+#haplotype-results-card .card-body,
+#marker-results-card .card-body {
+  padding: 0.75rem !important;
+}
+
+#haplotype-results-card label,
+#marker-results-card label {
+  font-size: 0.85rem !important;
+  margin-bottom: 0.35rem !important;
+}
+
+#haplotype-results-card .list-group-item,
+#marker-results-card .list-group-item {
+  padding: 0.5rem 0.75rem !important;
+}
+
+#haplotype-results-card .list-group-item strong,
+#marker-results-card .list-group-item strong {
+  font-size: 0.8rem !important;
+  line-height: 1.15 !important;
+  /* Keep long IDs on one line */
+  display: block !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+#haplotype-results-card .list-group-item small,
+#marker-results-card .list-group-item small {
+  font-size: 0.8rem !important;
+}
+
+@media (max-width: 576px) {
+  /* Hide the "X Haplotypes" / info text on very small screens */
+  #haplotype-pagination-info,
+  #marker-pagination-info {
+    display: none !important;
+  }
+}
+
+/* -----------------------------
+   Details panels (right side)
+------------------------------ */
+
+#haplotype-right-col .card-header,
+#marker-right-col .card-header {
+  padding: 0.5rem 0.75rem !important;
+}
+
+#haplotype-right-col .card-body,
+#marker-right-col .card-body {
+  padding: 0.75rem !important;
+}
+
+#haplotype-right-col h5,
+#marker-right-col h5 {
+  font-size: 1.05rem !important;
+}
+
+#haplotype-right-col h6,
+#marker-right-col h6 {
+  font-size: 0.95rem !important;
+}
+
+#haplotype-right-col p,
+#marker-right-col p {
+  margin-bottom: 0.5rem !important;
+}
+
+#haplotype-right-col hr,
+#marker-right-col hr {
+  margin: 0.75rem 0 !important;
+}
+
+#haplotype-right-col .btn,
+#marker-right-col .btn {
+  font-size: 0.85rem !important;
+  padding: 0.2rem 0.5rem !important;
+}
+
+/* Code/sequence blocks */
+#haplotype-right-col pre,
+#marker-right-col pre {
+  font-size: 0.85rem !important;
+  margin-bottom: 0.75rem !important;
+}
+

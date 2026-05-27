@@ -1,0 +1,207 @@
+:root {
+  --app-primary-1: #245842;
+  --app-primary-2: #245842;
+  --app-primary-3: #245842;
+  --app-primary-4: #245842;
+  --app-primary-5: #245842;
+
+  --app-on-primary-light: #ffffff;
+  --app-on-primary-dark: #ffffff;
+
+  --app-focus-ring: rgba(36, 88, 66, 0.35);
+}
+
+/* Primary actions */
+.btn-primary {
+  background-color: var(--app-primary-3) !important;
+  border-color: var(--app-primary-3) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active,
+.btn-primary.active,
+.show > .btn-primary.dropdown-toggle {
+  background-color: var(--app-primary-4) !important;
+  border-color: var(--app-primary-4) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-primary:focus-visible,
+.btn-primary:focus {
+  box-shadow: 0 0 0 0.25rem var(--app-focus-ring) !important;
+}
+
+.btn-primary:disabled,
+.btn-primary.disabled {
+  background-color: var(--app-primary-2) !important;
+  border-color: var(--app-primary-2) !important;
+  color: var(--app-on-primary-light) !important;
+  opacity: 0.75 !important;
+}
+
+/* Secondary scale mapping for existing Dash button variants */
+.btn-secondary {
+  background-color: var(--app-primary-2) !important;
+  border-color: var(--app-primary-2) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-info {
+  background-color: var(--app-primary-4) !important;
+  border-color: var(--app-primary-4) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-success {
+  background-color: var(--app-primary-1) !important;
+  border-color: var(--app-primary-1) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-warning {
+  background-color: var(--app-primary-3) !important;
+  border-color: var(--app-primary-3) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-danger {
+  background-color: var(--app-primary-5) !important;
+  border-color: var(--app-primary-5) !important;
+  color: var(--app-on-primary-dark) !important;
+}
+
+.btn-secondary:hover,
+.btn-secondary:focus,
+.btn-secondary:active,
+.btn-secondary.active,
+.show > .btn-secondary.dropdown-toggle {
+  background-color: var(--app-primary-3) !important;
+  border-color: var(--app-primary-3) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-info:hover,
+.btn-info:focus,
+.btn-info:active,
+.btn-info.active,
+.show > .btn-info.dropdown-toggle {
+  background-color: var(--app-primary-5) !important;
+  border-color: var(--app-primary-5) !important;
+  color: var(--app-on-primary-dark) !important;
+}
+
+.btn-success:hover,
+.btn-success:focus,
+.btn-success:active,
+.btn-success.active,
+.show > .btn-success.dropdown-toggle {
+  background-color: var(--app-primary-2) !important;
+  border-color: var(--app-primary-2) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-warning:hover,
+.btn-warning:focus,
+.btn-warning:active,
+.btn-warning.active,
+.show > .btn-warning.dropdown-toggle {
+  background-color: var(--app-primary-4) !important;
+  border-color: var(--app-primary-4) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-danger:hover,
+.btn-danger:focus,
+.btn-danger:active,
+.btn-danger.active,
+.show > .btn-danger.dropdown-toggle {
+  background-color: var(--app-primary-4) !important;
+  border-color: var(--app-primary-4) !important;
+  color: var(--app-on-primary-light) !important;
+}
+
+.btn-secondary:focus-visible,
+.btn-info:focus-visible,
+.btn-success:focus-visible,
+.btn-warning:focus-visible,
+.btn-danger:focus-visible {
+  box-shadow: 0 0 0 0.25rem var(--app-focus-ring) !important;
+}
+
+/* Outline buttons */
+.btn-outline-primary {
+  color: var(--app-primary-5) !important;
+  border-color: var(--app-primary-5) !important;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus,
+.btn-outline-primary:active,
+.btn-outline-primary.active,
+.show > .btn-outline-primary.dropdown-toggle {
+  color: var(--app-on-primary-dark) !important;
+  background-color: var(--app-primary-5) !important;
+  border-color: var(--app-primary-5) !important;
+}
+
+.btn-outline-primary:focus-visible {
+  box-shadow: 0 0 0 0.25rem var(--app-focus-ring) !important;
+}
+
+/* Outline variants used in details panels */
+.btn-outline-secondary {
+  color: var(--app-primary-4) !important;
+  border-color: var(--app-primary-4) !important;
+}
+
+.btn-outline-secondary:hover,
+.btn-outline-secondary:focus,
+.btn-outline-secondary:active,
+.btn-outline-secondary.active,
+.show > .btn-outline-secondary.dropdown-toggle {
+  color: var(--app-on-primary-light) !important;
+  background-color: var(--app-primary-2) !important;
+  border-color: var(--app-primary-2) !important;
+}
+
+.btn-outline-info {
+  color: var(--app-primary-5) !important;
+  border-color: var(--app-primary-5) !important;
+}
+
+.btn-outline-info:hover,
+.btn-outline-info:focus,
+.btn-outline-info:active,
+.btn-outline-info.active,
+.show > .btn-outline-info.dropdown-toggle {
+  color: var(--app-on-primary-dark) !important;
+  background-color: var(--app-primary-5) !important;
+  border-color: var(--app-primary-5) !important;
+}
+
+.btn-outline-secondary:focus-visible,
+.btn-outline-info:focus-visible {
+  box-shadow: 0 0 0 0.25rem var(--app-focus-ring) !important;
+}
+
+/* Link-style action buttons */
+.btn-link {
+  color: var(--app-primary-5) !important;
+}
+
+.btn-link:hover,
+.btn-link:focus {
+  color: var(--app-primary-4) !important;
+}
+
+/* Card title/header bars (e.g., Overview charts) */
+:root {
+  --app-card-header-bg: #d8ead8;
+}
+
+.card > .card-header,
+.card-header {
+  background-color: var(--app-card-header-bg) !important;
+}

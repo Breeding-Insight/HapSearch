@@ -1,0 +1,144 @@
+/* App banner - matches landing page hero section */
+:root {
+    --bs-secondary-color: #000000;
+    --bs-secondary-rgb: 0, 0, 0;
+}
+
+.text-muted,
+.text-secondary,
+.text-body-secondary,
+a.text-muted,
+a.text-secondary {
+    color: #000000 !important;
+}
+
+.app-hero-section {
+    padding: 6px 0 4px;
+    background: #ffffff;
+    margin-bottom: 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+/* Top row: logo+title on left, user controls on right — same baseline */
+.app-hero-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+}
+
+/* Left group: logo + title inline */
+.app-hero-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.app-hero-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+
+.app-hero-icon img {
+    height: 4rem;
+    width: auto;
+    border-radius: 12px;
+    display: block;
+}
+
+.app-hero-title {
+    font-size: 2.25rem;
+    font-weight: 400;
+    color: #212529;
+    margin: 0;
+    white-space: nowrap;
+}
+
+.app-hero-title .hero-bold {
+    font-weight: 700;
+}
+
+/* Right group: user / settings / logout */
+.app-hero-right {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+}
+
+.app-hero-user-line {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: #212529;
+    font-size: 0.9rem;
+    white-space: nowrap;
+}
+
+.app-hero-user-line a {
+    color: #245842;
+    text-decoration: none;
+}
+
+.app-hero-user-line a:hover {
+    text-decoration: underline;
+}
+
+/* Subtitle below the top row */
+.app-hero-subtitle {
+    font-size: 1rem;
+    color: #000;
+    margin: 0.5rem 0 0 0;
+}
+
+@media (max-width: 768px) {
+    .app-hero-top-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .app-hero-title {
+        font-size: 2rem;
+    }
+
+    .app-hero-right {
+        width: 100%;
+        align-items: flex-start;
+    }
+}
+
+/* App footer - matches landing page footer */
+.app-footer {
+    padding: 40px 0;
+    background-color: #ffffff;
+    border-top: 1px solid #e9ecef;
+    margin-top: 1.5rem;
+}
+
+.app-footer-logos {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.app-footer-logos img {
+    height: 50px;
+    width: auto;
+    object-fit: contain;
+}
+
+.app-footer-text {
+    text-align: center;
+    color: #000;
+    margin-top: 20px;
+}
+
+.app-footer-text small {
+    color: #000;
+}

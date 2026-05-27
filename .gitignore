@@ -1,0 +1,70 @@
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments and local tooling
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Logs and runtime output
+*.log
+logs/
+tmp/
+temp/
+
+# Local databases and SQLite sidecar files
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Local scratch SQL
+query.sql
+
+# Imported/generated data artifacts
+data/fasta/*
+!data/fasta/.gitkeep
+data/markers/*
+!data/markers/.gitkeep
+data/projects/*
+!data/projects/.gitkeep
+data/samples/*
+!data/samples/.gitkeep
+data/presence_absence/*
+!data/presence_absence/.gitkeep
+
+# Docker/build artifacts
+.docker/
+docker-compose.override.yml
+dist/
+build/
+*.egg-info/
+
+# Source design files not needed by the app at runtime
+*.psd

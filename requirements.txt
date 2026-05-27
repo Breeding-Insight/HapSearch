@@ -1,0 +1,37 @@
+# Haplosearch Requirements
+# Python 3.13+
+
+# Core dependencies
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
+dash-bio>=1.0.2
+dash-ag-grid>=31.0.0
+plotly>=5.17.0
+pandas>=2.0.0
+numpy>=1.26.0
+
+# Bioinformatics
+biopython>=1.81
+
+# Authentication
+authlib>=1.3.0
+requests>=2.31.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# Database drivers (for Microsoft SQL Server)
+# Option 1: pyodbc (widely used, well-supported)
+pyodbc>=4.0.39
+
+# Option 2: mssql-python (newer Microsoft driver, recommended for new projects)
+# mssql-python>=1.0.0  # Uncomment to use instead of pyodbc
+
+# Web server (for production deployment)
+gunicorn>=21.2.0
+
+# Optional: Development dependencies
+# Uncomment for development
+# pytest>=8.3.0
+# black>=24.10.0
+# flake8>=7.1.0

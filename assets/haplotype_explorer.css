@@ -1,0 +1,54 @@
+.haplo-frequency-range-slider .rc-slider-rail,
+.haplo-frequency-range-slider .rc-slider-track {
+  height: 6px !important; /* slightly thicker than default */
+  border-radius: 6px !important;
+}
+
+/* Selected range color (match app primary palette) */
+.haplo-frequency-range-slider .rc-slider-track,
+.haplo-frequency-range-slider .rc-slider-track-1,
+.haplo-frequency-range-slider .rc-slider-track-2 {
+  background-color: var(--app-primary-4, #245842) !important;
+}
+
+/* Handles match the same primary accent */
+.haplo-frequency-range-slider .rc-slider-handle {
+  border-color: var(--app-primary-4, #245842) !important;
+  margin-top: -4px !important; /* center on 6px bar (default assumes 4px) */
+}
+
+.haplo-frequency-range-slider .rc-slider-handle:focus,
+.haplo-frequency-range-slider .rc-slider-handle:active,
+.haplo-frequency-range-slider .rc-slider-handle:hover {
+  border-color: var(--app-primary-5, #245842) !important;
+  box-shadow: 0 0 0 0.2rem rgba(36, 88, 66, 0.25) !important;
+}
+
+/* Unified action button style for haplotype controls */
+.haplo-action-btn {
+  color: var(--app-primary-5, #245842) !important;
+  border-color: var(--app-primary-5, #245842) !important;
+  background-color: #ffffff !important;
+}
+
+.haplo-action-btn:hover,
+.haplo-action-btn:active,
+.haplo-action-btn.haplo-action-btn-open,
+.haplo-action-btn.active,
+.show > .haplo-action-btn.dropdown-toggle {
+  color: #ffffff !important;
+  border-color: var(--app-primary-5, #245842) !important;
+  background-color: var(--app-primary-5, #245842) !important;
+}
+
+.btn-outline-secondary.haplo-action-btn:focus:not(:focus-visible):not(.haplo-action-btn-open):not(:hover) {
+  color: var(--app-primary-5, #245842) !important;
+  border-color: var(--app-primary-5, #245842) !important;
+  background-color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.haplo-action-btn:focus-visible {
+  box-shadow: 0 0 0 0.2rem rgba(36, 88, 66, 0.25) !important;
+}
+
