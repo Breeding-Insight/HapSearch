@@ -188,6 +188,83 @@ def get_variants_for_marker(db: DatabaseManager, marker_id: str) -> List[Dict[st
     return db.execute_query(query, (marker_id,))
 
 
+def ensure_botloci_table(db: DatabaseManager) -> None:
+    """Create the bottom-loci lookup table if it is missing."""
+    db.execute_update("""
+        IF OBJECT_ID(N'[dbo].[botloci]', N'U') IS NULL
+        BEGIN
+            CREATE TABLE botloci (
+                id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
+                marker_id NVARCHAR(255) NOT NULL UNIQUE,
+                created_at DATETIME DEFAULT GETDATE()
+            )
+        END
+    """)
+    db.execute_update("""
+        IF OBJECT_ID(N'[dbo].[botloci]', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1
+               FROM sys.indexes
+               WHERE name = 'idx_botloci_marker_id'
+                 AND object_id = OBJECT_ID(N'[dbo].[botloci]')
+           )
+        BEGIN
+            CREATE INDEX idx_botloci_marker_id ON botloci(marker_id)
+        END
+    """)
+
+
+def botloci_table_exists(db: DatabaseManager) -> bool:
+    """Return whether the bottom-loci lookup table exists."""
+    try:
+        return db.table_exists('botloci')
+    except Exception:
+        return False
+
+
+def get_botloci_count(db: DatabaseManager) -> int:
+    """Return stored bottom-loci count, treating a missing table as empty."""
+    if not botloci_table_exists(db):
+        return 0
+    try:
+        result = db.execute_query("SELECT COUNT(*) as count FROM botloci")
+        return result[0]['count'] if result else 0
+    except Exception:
+        return 0
+
+
+def is_bottom_locus(db: DatabaseManager, marker_id: str) -> bool:
+    """Return True when the marker is listed in the bottom-loci lookup."""
+    if not marker_id or not botloci_table_exists(db):
+        return False
+    try:
+        result = db.execute_query(
+            "SELECT TOP 1 marker_id FROM botloci WHERE marker_id = ?",
+            (marker_id,),
+        )
+        return bool(result)
+    except Exception:
+        return False
+
+
+def upsert_botloci(db: DatabaseManager, marker_ids: List[str]) -> int:
+    """Insert bottom-loci marker IDs, ignoring existing rows."""
+    if not marker_ids:
+        return 0
+
+    ensure_botloci_table(db)
+    inserted = 0
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        for marker_id in marker_ids:
+            cursor.execute("SELECT 1 FROM botloci WHERE marker_id = ?", (marker_id,))
+            if cursor.fetchone():
+                continue
+            cursor.execute("INSERT INTO botloci (marker_id) VALUES (?)", (marker_id,))
+            inserted += 1
+    return inserted
+
+
 def search_microhaplotypes(db: DatabaseManager, search_term: str = None,
                           species_id: int = None) -> List[Dict[str, Any]]:
     """Search for microhaplotypes"""

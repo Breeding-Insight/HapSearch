@@ -51,6 +51,12 @@ CREATE TABLE variants (
     CONSTRAINT CK_variants_type CHECK (variant_type IN ('SNP', 'Indel', 'Target_SNP'))
 );
 
+CREATE TABLE botloci (
+    id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
+    marker_id NVARCHAR(255) NOT NULL UNIQUE,
+    created_at DATETIME DEFAULT GETDATE()
+);
+
 CREATE TABLE projects (
     id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
     project_code NVARCHAR(255) NOT NULL UNIQUE,
@@ -137,6 +143,7 @@ CREATE INDEX idx_microhap_marker ON microhaplotypes(marker_id);
 CREATE INDEX idx_microhap_name ON microhaplotypes(haplotype_name);
 CREATE INDEX idx_variants_marker ON variants(marker_id);
 CREATE INDEX idx_variants_position ON variants(position);
+CREATE INDEX idx_botloci_marker_id ON botloci(marker_id);
 CREATE INDEX idx_samples_project ON samples(project_id);
 CREATE INDEX idx_samples_species ON samples(species_id);
 CREATE INDEX idx_microhap_samples_hap ON microhaplotype_samples(microhaplotype_id);

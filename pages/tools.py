@@ -7,6 +7,7 @@ and statistics calculator
 from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
+import base64
 import sys
 import os
 
@@ -17,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from dash_app import app
 
 from database.db_manager import DatabaseManager
-from database.queries import get_all_species
+from database.queries import get_all_species, get_botloci_count, upsert_botloci
+from scripts.import_botloci import parse_botloci_text
 
 # Layout
 layout = dbc.Container([
@@ -110,7 +112,47 @@ layout = dbc.Container([
             ])
         ], label="Database Stats", tab_id="stats-tab"),
 
-        # Tab 3: Data Summary
+        # Tab 3: Data Import
+        dbc.Tab([
+            html.Div([
+                html.H5("Data Import", className="mt-3 mb-3"),
+                html.P("Upload supporting lookup files for visualization workflows", className="text-muted"),
+
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.I(className="fas fa-upload me-2"),
+                        "Bottom Loci (.botloci)"
+                    ]),
+                    dbc.CardBody([
+                        dcc.Upload(
+                            id='botloci-upload',
+                            children=html.Div([
+                                html.I(className="fas fa-cloud-upload-alt fa-2x mb-2"),
+                                html.Br(),
+                                'Drag and Drop or ',
+                                html.A('Select .botloci File', className="text-primary fw-bold")
+                            ]),
+                            style={
+                                'width': '100%',
+                                'height': '110px',
+                                'lineHeight': '30px',
+                                'borderWidth': '2px',
+                                'borderStyle': 'dashed',
+                                'borderRadius': '8px',
+                                'textAlign': 'center',
+                                'padding': '20px',
+                                'cursor': 'pointer',
+                                'backgroundColor': '#f8f9fa'
+                            },
+                            multiple=False
+                        ),
+                        html.Div(id='botloci-upload-status', className="mt-3")
+                    ])
+                ])
+            ])
+        ], label="Data Import", tab_id="import-tab"),
+
+        # Tab 4: Data Summary
         dbc.Tab([
             html.Div([
                 html.H5("Data Summary Report", className="mt-3 mb-3"),
@@ -272,6 +314,49 @@ def export_data(n_clicks, export_type, export_format, species_id):
         return None, dbc.Alert(f"Error: {str(e)}", color="danger")
 
 
+@app.callback(
+    Output('botloci-upload-status', 'children'),
+    Input('botloci-upload', 'contents'),
+    State('botloci-upload', 'filename'),
+    prevent_initial_call=True
+)
+def upload_botloci(contents, filename):
+    """Upload bottom-loci lookup data from a .botloci file."""
+    if not contents:
+        return None
+
+    try:
+        _content_type, content_string = contents.split(',', 1)
+        decoded = base64.b64decode(content_string).decode('utf-8-sig')
+        marker_ids = parse_botloci_text(decoded)
+
+        if not marker_ids:
+            return dbc.Alert(
+                "No locus IDs found. The .botloci file should contain one locus ID per line.",
+                color="warning",
+                className="mb-0",
+            )
+
+        db = DatabaseManager()
+        inserted = upsert_botloci(db, marker_ids)
+        total = get_botloci_count(db)
+        skipped = len(marker_ids) - inserted
+
+        return dbc.Alert([
+            html.I(className="fas fa-check-circle me-2"),
+            f"Loaded {len(marker_ids)} unique bottom loci from {filename}. ",
+            f"Imported {inserted} new; skipped {skipped} existing. ",
+            f"Total stored bottom loci: {total:,}."
+        ], color="success", className="mb-0")
+
+    except Exception as e:
+        return dbc.Alert(
+            f"Error importing .botloci file: {str(e)}",
+            color="danger",
+            className="mb-0",
+        )
+
+
 # Display database statistics
 @app.callback(
     Output('database-stats-display', 'children'),
@@ -309,6 +394,10 @@ def display_database_stats(n_clicks, active_tab):
         var_count = db.execute_query("SELECT COUNT(*) as count FROM variants")[0]['count']
         stats['variants'] = var_count
 
+        # Bottom loci
+        botloci_count = get_botloci_count(db)
+        stats['botloci'] = botloci_count
+
         # Projects
         proj_count = db.execute_query("SELECT COUNT(*) as count FROM projects")[0]['count']
         stats['projects'] = proj_count
@@ -317,8 +406,17 @@ def display_database_stats(n_clicks, active_tab):
         sample_count = db.execute_query("SELECT COUNT(*) as count FROM samples")[0]['count']
         stats['samples'] = sample_count
 
+        botloci_warning = None
+        if botloci_count == 0:
+            botloci_warning = dbc.Alert(
+                "No bottom-loci file has been uploaded. MSA strand orientation may be incorrect for bottom-strand loci.",
+                color="warning",
+                className="mb-3",
+            )
+
         # Create display
         return html.Div([
+            botloci_warning,
             dbc.Row([
                 dbc.Col([
                     dbc.Card([
@@ -388,6 +486,16 @@ def display_database_stats(n_clicks, active_tab):
                             html.I(className="fas fa-th fa-2x mb-2 text-dark"),
                             html.H3(stats['chromosomes'], className="mb-0"),
                             html.Small("Chromosomes", className="text-muted")
+                        ], className="text-center")
+                    ])
+                ], width=12, md=6, lg=4, className="mb-3"),
+
+                dbc.Col([
+                    dbc.Card([
+                        dbc.CardBody([
+                            html.I(className="fas fa-stream fa-2x mb-2 text-primary"),
+                            html.H3(f"{stats['botloci']:,}", className="mb-0"),
+                            html.Small("Bottom Loci", className="text-muted")
                         ], className="text-center")
                     ])
                 ], width=12, md=6, lg=4, className="mb-3"),
