@@ -24,7 +24,13 @@ from database.queries import (
     is_bottom_locus
 )
 from design.colors import NUCLEOTIDE_COLORS, COLOR_PALETTES
-from alignment.coordinates import relative_position, relative_positions
+from alignment.coordinates import (
+    MSA_AXIS_TICK_FONT,
+    MSA_AXIS_TITLE_FONT,
+    msa_chart_title,
+    relative_position,
+    relative_positions,
+)
 from alignment.aligner import MSAAligner
 from alignment.variant_annotator import VariantAnnotator
 from Bio.SeqRecord import SeqRecord
@@ -384,9 +390,7 @@ def create_marker_detail_view(marker_id):
             html.H5(marker['marker_id'], className="mb-1"),
             html.P([
                 html.I(className="fas fa-map-marker-alt me-2"),
-                f"{marker['chromosome_name']}: ",
-                f"{marker['position_start']:,} - {marker['position_start'] + seq_length:,} ",
-                f"({bp_length} bp)"
+                f"{bp_length} bp"
             ], className="text-muted small mb-1"),
             html.P([
                 html.I(className="fas fa-dna me-2"),
@@ -862,7 +866,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         if integer_positions:
             min_x = min(integer_positions)
             max_x = max(integer_positions)
-            tick_texts = [f'{pos:,}' for pos in integer_positions]
+            tick_texts = [f'<b>{pos:,}</b>' for pos in integer_positions]
             
             xaxis_config = dict(
                 tickmode='array',
@@ -871,7 +875,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
                 tickangle=-90,
                 showgrid=False,
                 autorange=xaxis_autorange,
-                tickfont=dict(family='Arial, sans-serif', size=10)
+                tickfont=MSA_AXIS_TICK_FONT
             )
         else:
             min_x = min(x_values)
@@ -884,7 +888,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
                 tickformat=',d',
                 showgrid=False,
                 autorange=xaxis_autorange,
-                tickfont=dict(family='Arial, sans-serif', size=10)
+                tickfont=MSA_AXIS_TICK_FONT
             )
     else:
         min_x = marker['position_start']
@@ -898,7 +902,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             tickformat=',d',
             showgrid=False,
             autorange=xaxis_autorange,
-            tickfont=dict(family='Arial, sans-serif', size=10)
+            tickfont=MSA_AXIS_TICK_FONT
         )
 
     top_marker_y = len(haplotypes) - 0.5 + 0.2
@@ -975,12 +979,10 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
 
     fig.update_layout(
         title=dict(
-            text=f'<b>Multiple Sequence Alignment</b><br><sup>Marker: {marker["marker_id"]} | {marker["chromosome_name"]}:{marker["position_start"]:,}-{marker["position_end"]:,}</sup>',
+            text=msa_chart_title(marker["marker_id"], is_bottom_strand),
             x=0.5,
             xanchor='center'
         ),
-        xaxis_title=x_title,
-        yaxis_title='Allele Variant',
         height=max(400, len(haplotypes) * 30 + 120),
         template='plotly_white',
         xaxis=xaxis_config,
@@ -989,19 +991,21 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             autorange=True,  # Enable autoscaling (removed fixed range)
             tickmode='array',
             tickvals=list(range(len(haplotypes))),
-            ticktext=[f"{name.split('|')[-1]}" for name in haplotype_names],
-            tickfont=dict(family='Arial, sans-serif', size=10)
+            ticktext=[f"<b>{name.split('|')[-1]}</b>" for name in haplotype_names],
+            tickfont=MSA_AXIS_TICK_FONT,
+            title=dict(text='<b>Allele Variant</b>', font=MSA_AXIS_TITLE_FONT)
         ),
         plot_bgcolor='#dee2e6' if not is_aligned else '#f8f9fa',  # Darker gray for unaligned to show grid lines better
         paper_bgcolor='#f8f9fa',  # Bootstrap bg-light color for the entire figure area (matches legend box)
         margin=dict(
-            t=90,
+            t=110,
             b=100, 
             l=150, 
             r=50
         ),
         annotations=all_annotations
     )
+    fig.update_xaxes(title=dict(text=f'<b>{x_title}</b>', font=MSA_AXIS_TITLE_FONT))
 
     return fig
 
