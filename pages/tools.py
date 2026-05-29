@@ -53,7 +53,7 @@ layout = dbc.Container([
                             options=[
                                 {'label': 'All Markers', 'value': 'markers'},
                                 {'label': 'All Haplotypes', 'value': 'haplotypes'},
-                                {'label': 'All Genotypes', 'value': 'samples'},
+                                {'label': 'All Samples', 'value': 'samples'},
                                 {'label': 'All Projects', 'value': 'projects'},
                                 {'label': 'All Variants', 'value': 'variants'},
                                 {'label': 'Complete Dataset (All tables)', 'value': 'all'}
@@ -453,7 +453,7 @@ def display_database_stats(n_clicks, active_tab):
                         dbc.CardBody([
                             html.I(className="fas fa-vial fa-2x mb-2 text-warning"),
                             html.H3(f"{stats['samples']:,}", className="mb-0"),
-                            html.Small("Genotypes", className="text-muted")
+                            html.Small("Samples", className="text-muted")
                         ], className="text-center")
                     ])
                 ], width=12, md=6, lg=3, className="mb-3"),
@@ -589,7 +589,7 @@ def generate_summary_report(n_clicks, species_id):
                         f"{hap_count:,}"
                     ]),
                     dbc.ListGroupItem([
-                        html.Strong("Genotypes: "),
+                        html.Strong("Samples: "),
                         f"{sample_count:,}"
                     ]),
                     dbc.ListGroupItem([

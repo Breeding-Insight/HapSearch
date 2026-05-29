@@ -217,7 +217,7 @@ def create_project_card(project):
                     dbc.Col([
                         html.Div([
                             html.H5(project['sample_count'] or 0, className="mb-0 text-primary"),
-                            html.Small("Genotypes", className="text-muted")
+                            html.Small("Samples", className="text-muted")
                         ], className="text-center")
                     ], width=6),
                     dbc.Col([

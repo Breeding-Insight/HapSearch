@@ -4,13 +4,13 @@ from typing import Iterable, List, Optional
 
 MSA_AXIS_TICK_FONT = {
     "family": "Arial, sans-serif",
-    "size": 13,
+    "size": 11,
     "color": "#111111",
 }
 
 MSA_AXIS_TITLE_FONT = {
     "family": "Arial, sans-serif",
-    "size": 15,
+    "size": 13,
     "color": "#111111",
 }
 

@@ -51,8 +51,8 @@ def init_database(schema_file: str = None, force: bool = False,
             tables = [
                 'allele_project_presence', 'allele_sample_presence',
                 'microhaplotype_samples',
-                'variants', 'botloci', 'microhaplotypes', 'samples', 'projects',
-                'users', 'project_contacts', 'contacts',
+                'variants', 'botloci', 'microhaplotypes', 'samples',
+                'project_contacts', 'projects', 'contacts', 'users',
                 'markers', 'chromosomes', 'species'
             ]
             for table in tables:

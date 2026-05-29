@@ -5,6 +5,11 @@ Visually equidistant color palettes for data visualization.
 See color_palettes.md for full documentation.
 """
 
+# App UI colors
+APP_NAVY = "#304C89"
+APP_BLUE = "#648DE5"
+APP_CARD_HEADER_BG = "#D8EAD8"
+
 # App UI palette (light -> dark) with explicit WCAG-compliant foregrounds
 APP_PRIMARY_SCALE = [
     {"background": "#245842", "foreground": "#ffffff"},
@@ -17,41 +22,52 @@ APP_PRIMARY_SCALE = [
 # Base list form used for chart color cycling and palette access
 APP_PRIMARY_COLORS = [step["background"] for step in APP_PRIMARY_SCALE]
 
-# Okabe-Ito colorblind-safe palette (excluding black, used separately in charts)
-OKABE_ITO_COLORS = [
-    "#E69F00",  # Orange
-    "#56B4E9",  # Sky Blue
-    "#245842",  # Replaced bluish green per app theme request
-    "#F0E442",  # Yellow
-    "#0072B2",  # Blue
-    "#D55E00",  # Vermillion
-    "#CC79A7",  # Reddish Purple
+# Shiny/color-blind graph palette for categorical chart colors.
+# Use only when a chart needs multiple distinct colors.
+SHINY_GRAPH_COLORS = [
+    "#48A9C5",  # Azure Core
+    "#319B42",  # Green Core
+    "#EFB526",  # Yellow Core
+    "#512C85",  # Purple Core
+    "#E43F4F",  # Red Core
+    "#707372",  # Grey Core
+    "#2A6576",  # Azure Deep
+    "#8F6D17",  # Yellow Deep
 ]
 
 # Color palettes by number of items
 COLOR_PALETTES = {
-    8: ['#003f5c', '#2f4b7c', '#665191', '#a05195', '#d45087', '#f95d6a', '#ff7c43', '#ffa600'],
-    7: ['#003f5c', '#374c80', '#7a5195', '#bc5090', '#ef5675', '#ff764a', '#ffa600'],
-    6: ['#003f5c', '#444e86', '#955196', '#dd5182', '#ff6e54', '#ffa600'],
-    5: ['#003f5c', '#58508d', '#bc5090', '#ff6361', '#ffa600'],
-    4: ['#003f5c', '#7a5195', '#ef5675', '#ffa600'],
-    3: ['#003f5c', '#bc5090', '#ffa600']
+    8: SHINY_GRAPH_COLORS,
+    7: SHINY_GRAPH_COLORS[:7],
+    6: SHINY_GRAPH_COLORS[:6],
+    5: SHINY_GRAPH_COLORS[:5],
+    4: SHINY_GRAPH_COLORS[:4],
+    3: SHINY_GRAPH_COLORS[:3],
 }
 
-# MSA Viewer nucleotide colors (Purine/Pyrimidine scheme)
+# MSA Viewer nucleotide colors (Shiny app core palette)
 NUCLEOTIDE_COLORS = {
-    'A': '#4CAF50',  # Adenine (Purine) - Green
-    'G': '#FFB300',  # Guanine (Purine) - Yellow/Orange
-    'C': '#2196F3',  # Cytosine (Pyrimidine) - Blue
-    'T': '#E53935',  # Thymine (Pyrimidine) - Red
+    'A': '#319B42',  # Adenine - Green Core
+    'G': '#EFB526',  # Guanine - Yellow Core
+    'C': '#48A9C5',  # Cytosine - Azure Core
+    'T': '#E43F4F',  # Thymine - Red Core
     '-': '#FFFFFF',  # Gap - White
-    'N': '#E0E0E0'   # Unknown - Light Gray
+    'N': '#C8CACA'   # Unknown - Grey Lite
 }
 
 
 def get_app_primary_scale():
     """Return the ordered app primary scale with foreground contrast mapping."""
     return APP_PRIMARY_SCALE
+
+
+def get_app_ui_colors():
+    """Return named app UI colors."""
+    return {
+        "navy": APP_NAVY,
+        "blue": APP_BLUE,
+        "card_header_bg": APP_CARD_HEADER_BG,
+    }
 
 
 def get_app_primary_colors():
@@ -64,14 +80,14 @@ def get_app_color_for_index(index):
     return APP_PRIMARY_COLORS[index % len(APP_PRIMARY_COLORS)]
 
 
-def get_okabe_ito_colors():
-    """Return the Okabe-Ito colorblind-safe palette."""
-    return OKABE_ITO_COLORS
+def get_shiny_graph_colors():
+    """Return the Shiny app graph palette."""
+    return SHINY_GRAPH_COLORS
 
 
-def get_okabe_ito_color_for_index(index):
-    """Return an Okabe-Ito color cycling through the palette."""
-    return OKABE_ITO_COLORS[index % len(OKABE_ITO_COLORS)]
+def get_shiny_graph_color_for_index(index):
+    """Return a Shiny graph color cycling through the palette."""
+    return SHINY_GRAPH_COLORS[index % len(SHINY_GRAPH_COLORS)]
 
 
 def get_palette(n_items):
