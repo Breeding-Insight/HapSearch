@@ -460,14 +460,14 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
             # Create clickable list
             haplotype_items = []
             for h in result['microhaplotypes']:
-                presence_stats = get_presence_statistics(db, h['haplotype_name'])
+                presence_stats = get_presence_statistics(db, h['haplotype_name'], h.get('species_id'))
                 species_sample_count = h.get('species_sample_count', 0)
                 sample_count = presence_stats.get('present_samples', 0)
                 if _is_missing_sample_context(species_sample_count) or _is_missing_sample_value(sample_count):
                     sample_label = "Missing"
                 else:
                     sample_label = f"{sample_count} samples"
-                freq_val = h.get('frequency', None)
+                freq_val = presence_stats.get('presence_frequency')
 
                 item = dbc.ListGroupItem([
                     html.Div([
@@ -590,13 +590,13 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
 
             # Get presence/absence data
             presence_samples = get_samples_for_allele(db, haplotype_name)
-            presence_stats = get_presence_statistics(db, haplotype_name)
             species_sample_count = get_species_sample_count(db, haplotype.get('species_id'))
             missing_sample_context = _is_missing_sample_context(species_sample_count)
+            presence_stats = get_presence_statistics(db, haplotype_name, haplotype.get('species_id'))
 
-            # Frequency is stored on the microhaplotypes table and updated (species-based)
-            # by database.db_manager.update_haplotype_frequencies().
-            frequency = haplotype.get('frequency')
+            # Calculate frequency from live presence stats so interrupted imports
+            # don't leave the detail panel showing stale stored values.
+            frequency = presence_stats.get('presence_frequency')
 
             # Use presence_samples as primary source (only samples with presence=1 for this haplotype)
             # If no presence data, fall back to microhaplotype_samples

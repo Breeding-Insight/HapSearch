@@ -558,6 +558,7 @@ def get_microhaplotypes_paginated(
             m.frequency,
             m.sample_count,
             mk.marker_id,
+            sp.id as species_id,
             sp.name as species_name,
             (
                 SELECT COUNT(*)
@@ -628,9 +629,7 @@ def get_microhaplotypes_paginated(
     # true zero frequency when users filter specifically for 0.
     if (
         min_frequency is not None
-        and max_frequency is not None
         and float(min_frequency) <= 0.0
-        and float(max_frequency) <= 0.0
     ):
         query += " AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)"
 
@@ -844,21 +843,39 @@ def get_alleles_for_sample(db: DatabaseManager, sample_code: str) -> List[Dict[s
     return db.execute_query(query, (sample_code,))
 
 
-def get_presence_statistics(db: DatabaseManager, haplotype_name: str) -> Dict[str, Any]:
-    """Get presence statistics for an allele"""
+def get_presence_statistics(
+    db: DatabaseManager,
+    haplotype_name: str,
+    species_id: int = None
+) -> Dict[str, Any]:
+    """Get presence statistics for an allele.
+
+    When species_id is provided, numerator and denominator are scoped to that
+    species so the result matches the Haplotype Explorer frequency definition.
+    """
     # Get present count
     query = """
         SELECT COUNT(*) as present_samples
         FROM allele_sample_presence asp
         JOIN microhaplotypes m ON asp.microhaplotype_id = m.id
+        JOIN samples s ON asp.sample_id = s.id
         WHERE m.haplotype_name = ?
     """
-    results = db.execute_query(query, (haplotype_name,))
+    params = [haplotype_name]
+    if species_id:
+        query += " AND s.species_id = ?"
+        params.append(species_id)
+
+    results = db.execute_query(query, tuple(params))
     present_samples = results[0]['present_samples'] if results else 0
     
     # Get total samples count
     total_query = "SELECT COUNT(*) as total FROM samples"
-    total_results = db.execute_query(total_query)
+    total_params = ()
+    if species_id:
+        total_query += " WHERE species_id = ?"
+        total_params = (species_id,)
+    total_results = db.execute_query(total_query, total_params)
     total_samples = total_results[0]['total'] if total_results else 0
     
     absent_samples = total_samples - present_samples
