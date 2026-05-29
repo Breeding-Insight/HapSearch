@@ -1,8 +1,14 @@
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from database.queries import get_microhaplotypes_paginated
+
+
+class FakeDb:
+    def shared_connection(self):
+        return nullcontext()
 
 
 class MicrohapMissingSampleTests(unittest.TestCase):
@@ -27,7 +33,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
 
         executed_count_query = db.execute_query.call_args_list[0][0][0]
         self.assertIn(
-            "AND COALESCE(m.sample_count, 0) > 0",
+            "AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)",
             executed_count_query,
         )
 
@@ -45,7 +51,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
 
         executed_count_query = db.execute_query.call_args_list[0][0][0]
         self.assertIn(
-            "AND COALESCE(m.sample_count, 0) > 0",
+            "AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)",
             executed_count_query,
         )
 
@@ -63,16 +69,16 @@ class MicrohapMissingSampleTests(unittest.TestCase):
 
         executed_count_query = db.execute_query.call_args_list[0][0][0]
         self.assertNotIn(
-            "AND COALESCE(m.sample_count, 0) > 0",
+            "AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)",
             executed_count_query,
         )
 
     def test_search_results_label_missing_when_species_has_no_samples(self):
         explorer = self._import_explorer_or_skip()
-        with patch.object(explorer, "DatabaseManager", return_value=object()), patch.object(
+        with patch.object(explorer, "DatabaseManager", return_value=FakeDb()), patch.object(
             explorer,
             "get_presence_statistics",
-            return_value={"present_samples": 0, "total_samples": 10},
+            return_value={"present_samples": 0, "total_samples": 10, "presence_frequency": 0.0},
         ), patch.object(
             explorer,
             "get_microhaplotypes_paginated",
@@ -107,7 +113,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
 
     def test_default_frequency_slider_applies_no_backend_bounds(self):
         explorer = self._import_explorer_or_skip()
-        with patch.object(explorer, "DatabaseManager", return_value=object()), patch.object(
+        with patch.object(explorer, "DatabaseManager", return_value=FakeDb()), patch.object(
             explorer,
             "get_microhaplotypes_paginated",
             return_value={
@@ -137,7 +143,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
             triggered_id={"type": "haplotype-list-item", "index": "H1"},
             triggered=[{"prop_id": "dummy"}],
         )
-        with patch.object(explorer, "DatabaseManager", return_value=object()), patch.object(
+        with patch.object(explorer, "DatabaseManager", return_value=FakeDb()), patch.object(
             explorer,
             "get_microhaplotype_details",
             return_value={
@@ -160,7 +166,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
         ), patch.object(
             explorer,
             "get_presence_statistics",
-            return_value={"present_samples": 0, "total_samples": 50},
+            return_value={"present_samples": 0, "total_samples": 50, "presence_frequency": 0.0},
         ), patch.object(
             explorer, "get_species_sample_count", return_value=0
         ), patch.object(explorer, "ctx", fake_ctx):
