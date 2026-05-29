@@ -76,14 +76,14 @@ PROJECTS_DIR = os.path.join(DATA_DIR, 'projects')
 DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '')
 
 # MSA Visualization settings (matches design/colors.py NUCLEOTIDE_COLORS)
-# Using Purine/Pyrimidine color scheme
+# Using Shiny app core palette
 MSA_BASE_COLORS = {
-    'A': '#4CAF50',  # Adenine (Purine) - Green
-    'G': '#FFB300',  # Guanine (Purine) - Yellow/Orange
-    'C': '#2196F3',  # Cytosine (Pyrimidine) - Blue
-    'T': '#E53935',  # Thymine (Pyrimidine) - Red
+    'A': '#319B42',  # Adenine - Green Core
+    'G': '#EFB526',  # Guanine - Yellow Core
+    'C': '#48A9C5',  # Cytosine - Azure Core
+    'T': '#E43F4F',  # Thymine - Red Core
     '-': '#FFFFFF',  # Gap - White
-    'N': '#E0E0E0'   # Unknown - Light Gray
+    'N': '#C8CACA'   # Unknown - Grey Lite
 }
 
 MSA_VARIANT_COLORS = {

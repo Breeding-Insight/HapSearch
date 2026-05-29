@@ -150,13 +150,13 @@ layout = dbc.Container([
                         ], id='haplotype-sequence-container')
                         ,
 
-                        # Genotype filter
+                        # Sample filter
                         html.Div([
-                            html.Label("Genotype:", className="fw-bold small", id='haplotype-sample-label'),
+                            html.Label("Sample:", className="fw-bold small", id='haplotype-sample-label'),
                             dbc.Input(
                                 id='haplotype-sample-filter',
                                 type='text',
-                                placeholder='Search genotype...',
+                                placeholder='Search sample...',
                                 debounce=True,
                                 className="mb-2"
                             )
@@ -173,7 +173,7 @@ layout = dbc.Container([
                                         style={'cursor': 'help'}
                                     ),
                                     dbc.Tooltip(
-                                        "The proportion of genotypes containing this microhaplotype relative to the total number of genotypes for this species. Note: This represents genotype frequency, not allelic frequency.",
+                                        "The proportion of samples containing this microhaplotype relative to the total number of samples for this species. Note: This represents sample frequency, not allelic frequency.",
                                         target="haplotype-frequency-range-tooltip-target",
                                         placement="top"
                                     )
@@ -263,18 +263,18 @@ layout = dbc.Container([
                         html.Div([
                             dbc.Button([
                                 html.I(className="fas fa-leaf me-2"),
-                                "Genotypes (0)",
+                                "Samples (0)",
                                 html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
                             ], id='toggle-samples', color="secondary", outline=True, size="sm", className="mb-2 haplo-action-btn")
                         ]),
                         html.Div([
                             # Search input for samples table
                             html.Div([
-                                html.Label("Search genotypes:", className="fw-bold small mb-2"),
+                                html.Label("Search samples:", className="fw-bold small mb-2"),
                                 dbc.Input(
                                     id='samples-search-input',
                                     type='text',
-                                    placeholder='Search genotypes...',
+                                    placeholder='Search samples...',
                                     debounce=True,
                                     className="mb-3"
                                 )
@@ -466,7 +466,7 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
                 if _is_missing_sample_context(species_sample_count) or _is_missing_sample_value(sample_count):
                     sample_label = "Missing"
                 else:
-                    sample_label = f"{sample_count} genotypes"
+                    sample_label = f"{sample_count} samples"
                 freq_val = h.get('frequency', None)
 
                 item = dbc.ListGroupItem([
@@ -535,7 +535,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
             None,
             [
                 html.I(className="fas fa-leaf me-2"),
-                "Genotypes (0)",
+                "Samples (0)",
                 html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
             ],
             {'display': 'none'},
@@ -553,7 +553,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                     None,
                     [
                         html.I(className="fas fa-leaf me-2"),
-                        "Genotypes (0)",
+                        "Samples (0)",
                         html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
                     ],
                     {'display': 'none'},
@@ -613,7 +613,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
             missing_samples_label = missing_sample_context or _is_missing_sample_value(
                 presence_stats.get('present_samples', 0)
             )
-            samples_button_label = "Genotypes (Missing)" if missing_samples_label else f"Genotypes ({samples_count})"
+            samples_button_label = "Samples (Missing)" if missing_samples_label else f"Samples ({samples_count})"
 
         # Store samples data in a separate callback output
         return html.Div([
@@ -649,7 +649,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                                 )
                             ], className="text-muted"),
                             dbc.Tooltip(
-                                "The proportion of genotypes containing this haplotype relative to the total number of genotypes for this species. Note: This represents genotype frequency, not allelic frequency.",
+                                "The proportion of samples containing this haplotype relative to the total number of samples for this species. Note: This represents sample frequency, not allelic frequency.",
                                 target="frequency-tooltip-target",
                                 placement="top"
                             )
@@ -666,7 +666,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                                 className="mb-0"
                             ),
                             html.Small([
-                                "Genotypes",
+                                "Samples",
                                 html.I(
                                     className="fas fa-info-circle ms-1",
                                     id="samples-tooltip-target",
@@ -674,7 +674,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                                 )
                             ], className="text-muted"),
                             dbc.Tooltip(
-                                "The number of genotypes that contain this haplotype.",
+                                "The number of samples that contain this haplotype.",
                                 target="samples-tooltip-target",
                                 placement="top"
                             )
@@ -694,7 +694,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                                 )
                             ], className="text-muted"),
                             dbc.Tooltip(
-                                "The number of projects that contain genotypes with this haplotype.",
+                                "The number of projects that contain samples with this haplotype.",
                                 target="projects-tooltip-target",
                                 placement="top"
                             )
@@ -752,7 +752,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
             None,
             [
                 html.I(className="fas fa-leaf me-2"),
-                "Genotypes (0)",
+                "Samples (0)",
                 html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
             ],
             {'display': 'none'},
@@ -871,7 +871,7 @@ def update_samples_table(samples_data, search_filter, current_page):
 
     if not samples_data:
         return (
-            html.Small("No genotypes found", className="text-muted"),
+            html.Small("No samples found", className="text-muted"),
             "",
             1, 1, {'display': 'none'},
             1
@@ -888,7 +888,7 @@ def update_samples_table(samples_data, search_filter, current_page):
     
     if not filtered_data:
         return (
-            html.Small("No genotypes match your search", className="text-muted"),
+            html.Small("No samples match your search", className="text-muted"),
             "",
             1, 1, {'display': 'none'},
             1
@@ -900,7 +900,7 @@ def update_samples_table(samples_data, search_filter, current_page):
         rowData=filtered_data,
         columnDefs=[
             {'headerName': '#', 'field': '#', 'width': 80, 'cellStyle': {'textAlign': 'center', 'color': '#000000', 'fontWeight': '500'}},
-            {'headerName': 'Genotype Name', 'field': 'Sample Name', 'flex': 1},
+            {'headerName': 'Sample Name', 'field': 'Sample Name', 'flex': 1},
             {'headerName': 'Owners', 'field': 'Owners', 'flex': 1},
         ],
         defaultColDef={
@@ -929,7 +929,7 @@ def update_samples_table(samples_data, search_filter, current_page):
     
     # Create pagination info text matching results section style
     if total_count > 0:
-        pagination_info = html.Span(f"Total: {total_count:,} genotypes", className="text-muted small")
+        pagination_info = html.Span(f"Total: {total_count:,} samples", className="text-muted small")
     else:
         pagination_info = ""
     

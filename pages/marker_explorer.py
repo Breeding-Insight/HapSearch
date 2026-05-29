@@ -23,7 +23,7 @@ from database.queries import (
     get_botloci_count,
     is_bottom_locus
 )
-from design.colors import NUCLEOTIDE_COLORS, COLOR_PALETTES
+from design.colors import NUCLEOTIDE_COLORS
 from alignment.coordinates import (
     MSA_AXIS_TICK_FONT,
     MSA_AXIS_TITLE_FONT,
@@ -635,12 +635,12 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         consensus_sequence.append(consensus_base)
 
     LIGHT_NUCLEOTIDE_COLORS = {
-        'A': '#B8E6BA',
-        'T': '#F5B7B1',
-        'G': '#FFE7A3',
-        'C': '#AED6F1',
+        'A': '#A3D9AC',
+        'G': '#F9E1A8',
+        'C': '#B5DDE8',
+        'T': '#F2A7AE',
         '-': '#F5F5F5',
-        'N': '#E0E0E0'
+        'N': '#C8CACA'
     }
 
     variant_positions = {}
@@ -779,8 +779,9 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         zmin_val = 0
         zmax_val = n_colors - 1 if n_colors > 1 else 1
     
-    # Use thicker grid (larger gaps) for unaligned sequences to make cells more distinct
-    cell_gap = 2.0 if not is_aligned else 0.5
+    # Keep unaligned sequence rows continuous so bases remain easy to read.
+    x_cell_gap = 0 if not is_aligned else 0.5
+    y_cell_gap = 2.0 if not is_aligned else 0.5
     
     fig = go.Figure(data=go.Heatmap(
         z=numeric_matrix,
@@ -794,8 +795,8 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         texttemplate='%{text}',
         textfont={"size": 12, "family": "Courier New, monospace", "color": "black"},
         hovertemplate=hover_template,
-        xgap=cell_gap,
-        ygap=cell_gap
+        xgap=x_cell_gap,
+        ygap=y_cell_gap
     ))
     snp_positions = set()
     for variant in variants:
@@ -866,7 +867,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         if integer_positions:
             min_x = min(integer_positions)
             max_x = max(integer_positions)
-            tick_texts = [f'<b>{pos:,}</b>' for pos in integer_positions]
+            tick_texts = [f'{pos:,}' for pos in integer_positions]
             
             xaxis_config = dict(
                 tickmode='array',
@@ -991,9 +992,9 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             autorange=True,  # Enable autoscaling (removed fixed range)
             tickmode='array',
             tickvals=list(range(len(haplotypes))),
-            ticktext=[f"<b>{name.split('|')[-1]}</b>" for name in haplotype_names],
+            ticktext=[f"{name.split('|')[-1]}" for name in haplotype_names],
             tickfont=MSA_AXIS_TICK_FONT,
-            title=dict(text='<b>Allele Variant</b>', font=MSA_AXIS_TITLE_FONT)
+            title=dict(text='Allele Variant', font=MSA_AXIS_TITLE_FONT)
         ),
         plot_bgcolor='#dee2e6' if not is_aligned else '#f8f9fa',  # Darker gray for unaligned to show grid lines better
         paper_bgcolor='#f8f9fa',  # Bootstrap bg-light color for the entire figure area (matches legend box)
@@ -1005,7 +1006,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         ),
         annotations=all_annotations
     )
-    fig.update_xaxes(title=dict(text=f'<b>{x_title}</b>', font=MSA_AXIS_TITLE_FONT))
+    fig.update_xaxes(title=dict(text=x_title, font=MSA_AXIS_TITLE_FONT))
 
     return fig
 

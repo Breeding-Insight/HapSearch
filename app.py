@@ -225,6 +225,11 @@ def serve_layout():
                         alt="Breeding Insight Logo",
                         style={"height": "50px", "width": "auto", "maxWidth": "200px"}
                     ),
+                    html.Img(
+                        src="/static/cornell_seal_simple_web_b31b1b.png",
+                        alt="Cornell University Seal",
+                        style={"height": "50px", "width": "auto", "maxWidth": "80px"}
+                    ),
                 ], className="app-footer-logos"),
                 html.Div([
                     html.Small("Funded by USDA-ARS and housed at University of Florida (UF/IFAS)."),
@@ -304,7 +309,7 @@ def update_db_status(active_tab, app_initialized):
                 f"{stats['species_count']} Species | ",
                 f"{stats['marker_count']:,} Loci | ",
                 f"{stats['microhaplotype_count']:,} Microhaplotypes | ",
-                f"{stats['sample_count']:,} Genotypes"
+                f"{stats['sample_count']:,} Samples"
             ], className="text-muted")
         ])
     except Exception as e:

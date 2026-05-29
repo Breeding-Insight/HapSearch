@@ -28,8 +28,6 @@ from database.queries import (
     get_microhaplotype_accumulation_data,
     get_species_snapshot,
 )
-from design.colors import get_okabe_ito_color_for_index
-
 # Layout
 layout = dbc.Container([
     #Chromosome Counts + Species Snapshot
@@ -91,7 +89,7 @@ layout = dbc.Container([
                     html.I(className="fas fa-chart-line me-2"),
                     "Microhaplotype Accumulation Curve",
                     html.Small(
-                        " (Cumulative unique microhaplotypes discovered per genotype)",
+                        " (Cumulative unique microhaplotypes discovered per sample)",
                         className="text-muted ms-2"
                     )
                 ]),
@@ -113,7 +111,9 @@ layout = dbc.Container([
 
 # Callbacks
 
-OVERVIEW_SINGLE_COLOR = get_okabe_ito_color_for_index(2)  # Okabe-Ito green
+OVERVIEW_BRAND_DARK_GREEN = "#245842"
+OVERVIEW_DENSITY_COLOR = OVERVIEW_BRAND_DARK_GREEN
+OVERVIEW_SINGLE_COLOR = OVERVIEW_BRAND_DARK_GREEN
 
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     """Convert a #RRGGBB color string to rgba(r,g,b,a)."""
@@ -122,8 +122,8 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
 
 
 def _build_density_color_map(items):
-    """Map chromosome names to Okabe-Ito colors, cycling as needed."""
-    return {item: get_okabe_ito_color_for_index(i) for i, item in enumerate(items)}
+    """Map chromosome names to the shared density chart color."""
+    return {item: OVERVIEW_DENSITY_COLOR for item in items}
 
 @app.callback(
     Output('overview-chromosome-chart', 'figure'),
@@ -197,10 +197,10 @@ SNAPSHOT_TILES = [
     {'key': 'marker_count',           'label': 'Loci',                  'icon': 'fas fa-map-marker-alt'},
     {'key': 'microhaplotype_count',   'label': 'Microhaplotypes',       'icon': 'fas fa-dna'},
     {'key': 'avg_alleles_per_marker', 'label': 'Avg. microhapotypes / Loci', 'icon': 'fas fa-layer-group'},
-    {'key': 'sample_count',           'label': 'Genotypes',             'icon': 'fas fa-vial'},
+    {'key': 'sample_count',           'label': 'Samples',               'icon': 'fas fa-vial'},
     {'key': 'project_count',          'label': 'Contributing Projects', 'icon': 'fas fa-folder-open'},
     {'key': 'rare_alleles',           'label': 'Rare microhapotypes',   'icon': 'fas fa-gem',
-     'tooltip': 'Microhapotypes observed in only one genotype across all projects'},
+     'tooltip': 'Microhapotypes observed in only one sample across all projects'},
 ]
 
 
@@ -507,7 +507,7 @@ def update_accumulation_curve(species_id):
             rows = get_microhaplotype_accumulation_data(db, species_id)
 
         if not rows:
-            empty.update_layout(title="No genotype-microhaplotype data available")
+            empty.update_layout(title="No sample-microhaplotype data available")
             return empty
 
         x_vals = [row['sample_index'] for row in rows]
@@ -545,7 +545,7 @@ def update_accumulation_curve(species_id):
             fill='tozeroy',
             fillcolor=_hex_to_rgba(OVERVIEW_SINGLE_COLOR, 0.12),
             hovertemplate=(
-                '<b>Genotype #%{x}</b><br>'
+                '<b>Sample #%{x}</b><br>'
                 'Unique microhaplotypes: %{y:,}<extra></extra>'
             ),
         ))
@@ -576,7 +576,7 @@ def update_accumulation_curve(species_id):
         y_max = max(y_vals) * 1.15 if y_vals else 1
 
         fig.update_layout(
-            xaxis_title="Cumulative Genotypes",
+            xaxis_title="Cumulative Samples",
             yaxis_title="Unique Microhaplotypes",
             xaxis=dict(fixedrange=True),
             yaxis=dict(range=[0, y_max], fixedrange=True),

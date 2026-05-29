@@ -4,24 +4,82 @@
   border-radius: 6px !important;
 }
 
-/* Selected range color (match app primary palette) */
+/* Selected range color (Shiny green core) */
 .haplo-frequency-range-slider .rc-slider-track,
 .haplo-frequency-range-slider .rc-slider-track-1,
 .haplo-frequency-range-slider .rc-slider-track-2 {
-  background-color: var(--app-primary-4, #245842) !important;
+  background-color: #319B42 !important;
 }
 
-/* Handles match the same primary accent */
+/* Handles match the same Shiny green accent */
 .haplo-frequency-range-slider .rc-slider-handle {
-  border-color: var(--app-primary-4, #245842) !important;
+  border-color: #319B42 !important;
   margin-top: -4px !important; /* center on 6px bar (default assumes 4px) */
 }
 
 .haplo-frequency-range-slider .rc-slider-handle:focus,
 .haplo-frequency-range-slider .rc-slider-handle:active,
 .haplo-frequency-range-slider .rc-slider-handle:hover {
-  border-color: var(--app-primary-5, #245842) !important;
-  box-shadow: 0 0 0 0.2rem rgba(36, 88, 66, 0.25) !important;
+  border-color: #319B42 !important;
+  box-shadow: 0 0 0 0.2rem rgba(49, 155, 66, 0.25) !important;
+}
+
+#haplotype-frequency-range .rc-slider-track,
+#haplotype-frequency-range .rc-slider-track-1,
+#haplotype-frequency-range .rc-slider-track-2,
+#haplotype-frequency-range .rc-slider-tracks .rc-slider-track,
+#haplotype-frequency-range .rc-slider-track-draggable,
+#haplotype-frequency-range.rc-slider .rc-slider-track,
+#haplotype-frequency-range.rc-slider .rc-slider-track-1,
+#haplotype-frequency-range.rc-slider .rc-slider-track-2,
+#haplotype-frequency-range.rc-slider .rc-slider-tracks .rc-slider-track,
+#haplotype-frequency-range.rc-slider .rc-slider-track-draggable,
+.haplo-frequency-range-slider.rc-slider .rc-slider-track,
+.haplo-frequency-range-slider.rc-slider .rc-slider-track-1,
+.haplo-frequency-range-slider.rc-slider .rc-slider-track-2,
+.haplo-frequency-range-slider.rc-slider .rc-slider-tracks .rc-slider-track,
+.haplo-frequency-range-slider.rc-slider .rc-slider-track-draggable {
+  background: #319B42 !important;
+  background-color: #319B42 !important;
+}
+
+#haplotype-frequency-range .rc-slider-handle,
+#haplotype-frequency-range .rc-slider-handle-1,
+#haplotype-frequency-range .rc-slider-handle-2,
+#haplotype-frequency-range.rc-slider .rc-slider-handle,
+#haplotype-frequency-range.rc-slider .rc-slider-handle-1,
+#haplotype-frequency-range.rc-slider .rc-slider-handle-2,
+.haplo-frequency-range-slider.rc-slider .rc-slider-handle,
+.haplo-frequency-range-slider.rc-slider .rc-slider-handle-1,
+.haplo-frequency-range-slider.rc-slider .rc-slider-handle-2 {
+  border-color: #319B42 !important;
+}
+
+#haplotype-frequency-range .rc-slider-handle:focus,
+#haplotype-frequency-range .rc-slider-handle:active,
+#haplotype-frequency-range .rc-slider-handle:hover,
+#haplotype-frequency-range.rc-slider .rc-slider-handle:focus,
+#haplotype-frequency-range.rc-slider .rc-slider-handle:active,
+#haplotype-frequency-range.rc-slider .rc-slider-handle:hover,
+.haplo-frequency-range-slider.rc-slider .rc-slider-handle:focus,
+.haplo-frequency-range-slider.rc-slider .rc-slider-handle:active,
+.haplo-frequency-range-slider.rc-slider .rc-slider-handle:hover {
+  border-color: #319B42 !important;
+  box-shadow: 0 0 0 0.2rem rgba(49, 155, 66, 0.25) !important;
+}
+
+#haplotype-frequency-range .rc-slider-dot-active,
+#haplotype-frequency-range.rc-slider .rc-slider-dot-active,
+.haplo-frequency-range-slider.rc-slider .rc-slider-dot-active {
+  border-color: #319B42 !important;
+}
+
+/* Dash 4 RangeSlider uses Radix/Dash class names instead of rc-slider.
+   Scope the Dash interactive variable so this one control follows HapSearch
+   green without changing every Dash component on the page. */
+#haplotype-frequency-range,
+.haplo-frequency-range-slider {
+  --Dash-Fill-Interactive-Strong: #319B42;
 }
 
 /* Unified action button style for haplotype controls */
@@ -51,4 +109,3 @@
 .haplo-action-btn:focus-visible {
   box-shadow: 0 0 0 0.2rem rgba(36, 88, 66, 0.25) !important;
 }
-
