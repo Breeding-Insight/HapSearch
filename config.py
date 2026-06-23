@@ -71,6 +71,10 @@ FASTA_DIR = os.path.join(DATA_DIR, 'fasta')
 MARKERS_DIR = os.path.join(DATA_DIR, 'markers')
 SAMPLES_DIR = os.path.join(DATA_DIR, 'samples')
 PROJECTS_DIR = os.path.join(DATA_DIR, 'projects')
+PRESENCE_ARTIFACT_DIR = os.getenv(
+    'PRESENCE_ARTIFACT_DIR',
+    os.path.join(DATA_DIR, 'presence_artifacts')
+)
 
 # Dropbox configuration (for metadata sync)
 DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '')

@@ -299,8 +299,8 @@ def update_haplotype_frequencies(db: DatabaseManager):
 
     Notes:
     - Species for a microhaplotype is derived via markers -> chromosomes -> species.
-    - Presence is primarily sourced from allele_sample_presence (presence-only table).
-      If no presence rows exist for a microhaplotype, fall back to microhaplotype_samples.
+    - Presence/absence imports maintain microhaplotype_presence_summary.
+    - The older microhaplotype_samples table is still used by scripts/import_samples.py.
     """
     query = """
         WITH species_totals AS (
@@ -313,24 +313,16 @@ def update_haplotype_frequencies(db: DatabaseManager):
                 m.id AS microhaplotype_id,
                 c.species_id,
                 CASE
-                    WHEN ap.has_presence = 1 THEN ISNULL(ac.asp_present_samples, 0)
+                    WHEN ps.present_count IS NOT NULL THEN ps.present_count
                     ELSE ISNULL(mc.ms_present_samples, 0)
                 END AS present_samples
             FROM microhaplotypes m
             JOIN markers mk ON mk.id = m.marker_id
             JOIN chromosomes c ON c.id = mk.chromosome_id
-            OUTER APPLY (
-                SELECT TOP 1 1 AS has_presence
-                FROM allele_sample_presence asp0
-                WHERE asp0.microhaplotype_id = m.id
-            ) ap
-            OUTER APPLY (
-                SELECT COUNT(DISTINCT s.id) AS asp_present_samples
-                FROM allele_sample_presence asp
-                JOIN samples s ON s.id = asp.sample_id
-                WHERE asp.microhaplotype_id = m.id
-                  AND s.species_id = c.species_id
-            ) ac
+            LEFT JOIN microhaplotype_presence_summary ps
+              ON ps.microhaplotype_id = m.id
+             AND ps.species_id = c.species_id
+             AND ps.entity_type = 'sample'
             OUTER APPLY (
                 SELECT COUNT(DISTINCT s.id) AS ms_present_samples
                 FROM microhaplotype_samples ms

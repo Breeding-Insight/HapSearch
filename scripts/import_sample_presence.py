@@ -22,8 +22,15 @@ from typing import Optional, List, Dict, Any
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.db_manager import DatabaseManager, get_or_create_species, update_haplotype_frequencies
-from database.bulk_import import bulk_load_presence, disable_constraints_and_indexes, restore_constraints_and_indexes
+from database.db_manager import DatabaseManager, get_or_create_species
+from database.presence_artifacts import (
+    counts_by_microhaplotype,
+    ensure_presence_artifact_schema,
+    record_presence_artifact,
+    upsert_presence_summary,
+    write_presence_bitmap_artifact,
+    write_presence_lookup_artifact,
+)
 from database.queries import get_all_species
 from scripts.presence_metadata import (
     get_or_upsert_project,
@@ -339,7 +346,7 @@ class PresenceImporter:
         species_id: int,
         project_id: int,
         verbose: bool = True,
-        staging_chunk_size: int = 500_000,
+        artifact_dir: Optional[str] = None,
     ) -> Dict[str, int]:
         """Import presence/absence data from CSV file"""
         if not os.path.exists(csv_path):
@@ -479,20 +486,56 @@ class PresenceImporter:
             if verbose:
                 print(f"  Built {len(pairs):,} presence pairs", flush=True)
 
-            disable_constraints_and_indexes(cursor, conn, 'allele_sample_presence', verbose)
-
-            try:
-                result = bulk_load_presence(
-                    cursor, conn,
-                    'allele_sample_presence', 'sample_id',
-                    pairs, mh_ids_in_file, sample_ids,
-                    staging_chunk_size=staging_chunk_size,
-                    verbose=verbose,
+            if verbose:
+                print("  Writing compressed sample presence artifacts...", flush=True)
+            ensure_presence_artifact_schema(cursor)
+            metadata = write_presence_bitmap_artifact(
+                pairs,
+                mh_ids_in_file,
+                sample_ids,
+                entity_type="sample",
+                species_id=species_id,
+                project_id=project_id,
+                source_path=csv_path,
+                output_dir=artifact_dir,
+            )
+            artifact_id = record_presence_artifact(cursor, metadata)
+            lookup_metadata = write_presence_lookup_artifact(
+                pairs,
+                mh_ids_in_file,
+                sample_ids,
+                entity_type="sample_lookup",
+                species_id=species_id,
+                project_id=project_id,
+                source_path=csv_path,
+                output_dir=artifact_dir,
+            )
+            record_presence_artifact(cursor, lookup_metadata)
+            if artifact_id:
+                upsert_presence_summary(
+                    cursor,
+                    artifact_id=artifact_id,
+                    species_id=species_id,
+                    entity_type="sample",
+                    total_count=len(sample_ids),
+                    counts_by_microhaplotype=counts_by_microhaplotype(
+                        pairs,
+                        mh_ids_in_file,
+                    ),
                 )
-                imported_count = result['inserted']
-                deleted_count = result['deleted']
-            finally:
-                restore_constraints_and_indexes(cursor, conn, 'allele_sample_presence', verbose)
+            conn.commit()
+            imported_count = len(pairs)
+            if verbose:
+                size_mb = (metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
+                lookup_size_mb = (lookup_metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
+                print(
+                    f"  Allele->sample artifact: {metadata['artifact_path']} ({size_mb:.2f} MB)",
+                    flush=True,
+                )
+                print(
+                    f"  Sample->allele artifact: {lookup_metadata['artifact_path']} ({lookup_size_mb:.2f} MB)",
+                    flush=True,
+                )
 
         if verbose:
             total_elapsed = time.time() - start_time
@@ -562,10 +605,8 @@ Example:
     )
     parser.add_argument('--project-id', type=int, help='Deprecated: project now resolves from each filename')
     parser.add_argument(
-        '--staging-chunk-size',
-        type=int,
-        default=500_000,
-        help='Rows per staging-table commit chunk (controls log pressure, default 500000)'
+        '--presence-artifact-dir',
+        help='Directory for compressed presence artifacts (default: data/presence_artifacts)'
     )
     parser.add_argument('--quiet', action='store_true', help='Suppress verbose output')
 
@@ -683,17 +724,13 @@ Example:
                 species_id,
                 project_id,
                 verbose,
-                staging_chunk_size=args.staging_chunk_size,
+                artifact_dir=args.presence_artifact_dir,
             )
             for k in aggregate.keys():
                 aggregate[k] += int(results.get(k, 0))
 
         if aggregate['errors'] > 0 and aggregate['errors'] > aggregate['imported']:
             sys.exit(1)
-
-        if verbose:
-            print("\nUpdating haplotype frequencies...", flush=True)
-        update_haplotype_frequencies(importer.db)
 
         print("\nAll imports complete!", flush=True)
         print(f"  Files processed: {len(input_files)}", flush=True)
@@ -713,7 +750,8 @@ Example:
         if "9002" in str(e) or "transaction log" in str(e).lower():
             print(
                 "Hint: SQL Server transaction log is full. "
-                "Try reducing --staging-chunk-size (e.g., 200000).",
+                "The current importer stores the matrix as artifacts; check metadata/sample/project writes "
+                "and confirm the database was initialized with the current schema.",
                 file=sys.stderr,
             )
         import traceback

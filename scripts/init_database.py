@@ -49,6 +49,10 @@ def init_database(schema_file: str = None, force: bool = False,
         if force:
             print("Force mode: dropping existing tables...")
             tables = [
+                'microhaplotype_presence_summary', 'presence_artifacts',
+                # Legacy presence edge tables from the rowstore design. They are
+                # no longer created by schema_mssql.sql, but stale dev DBs may
+                # still have FKs from these tables to microhaplotypes/projects/samples.
                 'allele_project_presence', 'allele_sample_presence',
                 'microhaplotype_samples',
                 'variants', 'botloci', 'microhaplotypes', 'samples',

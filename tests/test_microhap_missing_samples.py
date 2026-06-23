@@ -176,7 +176,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
                 current_details=None,
             )
 
-        self.assertEqual(toggle_children[1], "Samples (Missing)")
+        self.assertEqual(toggle_children[1], "Samples (Missing samples)")
         self.assertIn("Missing", repr(detail))
 
 

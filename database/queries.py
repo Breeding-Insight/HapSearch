@@ -3,6 +3,10 @@
 import re
 from typing import List, Dict, Any, Optional, Tuple
 from database.db_manager import DatabaseManager
+from database.presence_artifacts import (
+    read_entity_ids_for_microhaplotype,
+    read_microhaplotype_ids_for_entity,
+)
 
 _PROJECT_PREFIX_RE = re.compile(r'^(P\d+)')
 _JUNK_PROJECT_NAMES = frozenset({'count', '12plates', '2plates'})
@@ -53,6 +57,93 @@ def _deduplicate_projects(project_rows: List[Dict[str, Any]]) -> List[Dict[str, 
             p_copy['_all_ids'] = {p.get('id')}
             seen[key] = p_copy
     return list(seen.values())
+
+
+def _chunks(items: List[int], size: int = 400):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def _get_microhaplotype_ids_for_sample_filter_artifacts(
+    db: DatabaseManager,
+    sample_filter: str,
+    species_id: int = None,
+) -> List[int]:
+    """Resolve sample-name filtering through sample-oriented bitmap artifacts."""
+    if not sample_filter:
+        return []
+
+    sample_query = "SELECT id FROM samples WHERE sample_code LIKE ?"
+    sample_params: List[Any] = [f"%{sample_filter}%"]
+    if species_id:
+        sample_query += " AND species_id = ?"
+        sample_params.append(species_id)
+    sample_rows = db.execute_query(sample_query, tuple(sample_params))
+    sample_ids = [int(row["id"]) for row in sample_rows if row.get("id") is not None]
+    if not sample_ids:
+        return []
+
+    artifact_query = """
+        SELECT artifact_path
+        FROM presence_artifacts
+        WHERE entity_type = 'sample_lookup'
+    """
+    artifact_params: List[Any] = []
+    if species_id:
+        artifact_query += " AND species_id = ?"
+        artifact_params.append(species_id)
+    artifact_rows = db.execute_query(artifact_query, tuple(artifact_params))
+    artifact_paths = [row["artifact_path"] for row in artifact_rows if row.get("artifact_path")]
+    if not artifact_paths:
+        return []
+
+    microhaplotype_ids = set()
+    for artifact_path in artifact_paths:
+        for sample_id in sample_ids:
+            try:
+                microhaplotype_ids.update(
+                    read_microhaplotype_ids_for_entity(artifact_path, sample_id)
+                )
+            except Exception:
+                continue
+
+    # SQL Server has a 2100-parameter limit. Keep this helper conservative; the
+    # sample search UI is intended for narrow sample-code searches.
+    return sorted(microhaplotype_ids)[:1800]
+
+
+def _get_entity_ids_for_haplotype_artifacts(
+    db: DatabaseManager,
+    haplotype_name: str,
+    entity_type: str,
+) -> List[int]:
+    """Return present sample/project IDs for a haplotype across all artifacts."""
+    artifact_query = """
+        SELECT
+            m.id AS microhaplotype_id,
+            pa.artifact_path
+        FROM microhaplotypes m
+        JOIN markers mk ON mk.id = m.marker_id
+        JOIN chromosomes c ON c.id = mk.chromosome_id
+        JOIN presence_artifacts pa
+          ON pa.species_id = c.species_id
+         AND pa.entity_type = ?
+        WHERE m.haplotype_name = ?
+        ORDER BY pa.created_at
+    """
+    artifact_rows = db.execute_query(artifact_query, (entity_type, haplotype_name))
+    entity_ids = set()
+    for artifact in artifact_rows:
+        try:
+            entity_ids.update(
+                read_entity_ids_for_microhaplotype(
+                    artifact["artifact_path"],
+                    int(artifact["microhaplotype_id"]),
+                )
+            )
+        except Exception:
+            continue
+    return sorted(entity_ids)
 
 
 def get_all_species(db: DatabaseManager) -> List[Dict[str, Any]]:
@@ -595,27 +686,17 @@ def get_microhaplotypes_paginated(
 
     if sample_filter:
         # Filter haplotypes by sample code/name (supports substring match).
-        # Supports both presence table (allele_sample_presence) and association table (microhaplotype_samples).
-        query += """
-            AND (
-                EXISTS (
-                    SELECT 1
-                    FROM allele_sample_presence asp
-                    JOIN samples s ON s.id = asp.sample_id
-                    WHERE asp.microhaplotype_id = m.id
-                      AND s.sample_code LIKE ?
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM microhaplotype_samples ms
-                    JOIN samples s2 ON s2.id = ms.sample_id
-                    WHERE ms.microhaplotype_id = m.id
-                      AND s2.sample_code LIKE ?
-                )
-            )
-        """
-        sample_pattern = f"%{sample_filter}%"
-        params.extend([sample_pattern, sample_pattern])
+        artifact_microhaplotype_ids = _get_microhaplotype_ids_for_sample_filter_artifacts(
+            db,
+            sample_filter,
+            species_id,
+        )
+        if artifact_microhaplotype_ids:
+            artifact_placeholders = ",".join(["?"] * len(artifact_microhaplotype_ids))
+            query += f" AND m.id IN ({artifact_placeholders})"
+            params.extend(artifact_microhaplotype_ids)
+        else:
+            query += " AND 1 = 0"
 
     if min_frequency is not None:
         query += " AND m.frequency >= ?"
@@ -710,32 +791,22 @@ def get_species_snapshot(db: DatabaseManager, species_id: int) -> Dict[str, Any]
     sc_rows = db.execute_query(sample_count_query, (species_id,))
     sample_count = (sc_rows[0].get('sample_count') or 0) if sc_rows else 0
 
-    all_species_projects_query = """
+    sample_projects_query = """
         SELECT p.id, p.project_code, p.project_name, p.pi_name
         FROM projects p
         WHERE EXISTS (SELECT 1 FROM samples s WHERE s.project_id = p.id AND s.species_id = ?)
     """
-    params = [species_id]
-    try:
-        if db.table_exists('allele_project_presence'):
-            all_species_projects_query += """
-                UNION
-                SELECT p2.id, p2.project_code, p2.project_name, p2.pi_name
-                FROM projects p2
-                WHERE EXISTS (
-                    SELECT 1 FROM allele_project_presence app
-                    JOIN microhaplotypes m ON app.microhaplotype_id = m.id
-                    JOIN markers mk ON m.marker_id = mk.id
-                    JOIN chromosomes c ON mk.chromosome_id = c.id
-                    WHERE app.project_id = p2.id AND c.species_id = ?
-                )
-            """
-            params.append(species_id)
-    except Exception:
-        pass
-    all_proj_rows = db.execute_query(all_species_projects_query, tuple(params))
+    all_proj_rows = db.execute_query(sample_projects_query, (species_id,))
     deduped = _deduplicate_projects(all_proj_rows)
     project_count = len(deduped)
+    artifact_project_query = """
+        SELECT MAX(total_count) AS project_count
+        FROM microhaplotype_presence_summary
+        WHERE species_id = ? AND entity_type = 'project'
+    """
+    artifact_project_rows = db.execute_query(artifact_project_query, (species_id,))
+    if artifact_project_rows:
+        project_count = max(project_count, int(artifact_project_rows[0].get('project_count') or 0))
 
     avg_alleles = round(microhaplotype_count / marker_count, 1) if marker_count else 0.0
 
@@ -798,49 +869,88 @@ def get_microhaplotype_details(db: DatabaseManager, haplotype_name: str) -> Dict
 
 
 def get_samples_for_allele(db: DatabaseManager, haplotype_name: str) -> List[Dict[str, Any]]:
-    """Get all samples with presence for an allele (haplotype_name)"""
-    query = """
-        SELECT
-            s.sample_code,
-            1 as presence,
-            s.sample_type,
-            s.collection_date,
-            s.collection_location,
-            p.project_code,
-            p.project_name,
-            p.pi_name,
-            sp.name as species_name
-        FROM allele_sample_presence asp
-        JOIN microhaplotypes m ON asp.microhaplotype_id = m.id
-        JOIN samples s ON asp.sample_id = s.id
-        JOIN projects p ON s.project_id = p.id
-        JOIN species sp ON s.species_id = sp.id
-        WHERE m.haplotype_name = ?
-        ORDER BY p.project_code, s.sample_code
-    """
-    return db.execute_query(query, (haplotype_name,))
+    """Get all samples with presence for an allele from compressed artifacts."""
+    sample_ids = _get_entity_ids_for_haplotype_artifacts(db, haplotype_name, "sample")
+    if not sample_ids:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    for i in range(0, len(sample_ids), 400):
+        chunk = sample_ids[i:i + 400]
+        placeholders = ",".join(["?"] * len(chunk))
+        sample_query = f"""
+            SELECT
+                s.sample_code,
+                1 as presence,
+                s.sample_type,
+                s.collection_date,
+                s.collection_location,
+                p.project_code,
+                p.project_name,
+                p.pi_name,
+                sp.name as species_name
+            FROM samples s
+            JOIN projects p ON s.project_id = p.id
+            JOIN species sp ON s.species_id = sp.id
+            WHERE s.id IN ({placeholders})
+            ORDER BY p.project_code, s.sample_code
+        """
+        results.extend(db.execute_query(sample_query, tuple(chunk)))
+    return sorted(results, key=lambda r: (r.get("project_code") or "", r.get("sample_code") or ""))
 
 
 def get_alleles_for_sample(db: DatabaseManager, sample_code: str) -> List[Dict[str, Any]]:
-    """Get all alleles present in a sample"""
-    query = """
-        SELECT
-            m.haplotype_name,
-            1 as presence,
-            m.haplotype_sequence,
-            m.frequency,
-            mk.marker_id,
-            sp.name as species_name
-        FROM allele_sample_presence asp
-        JOIN microhaplotypes m ON asp.microhaplotype_id = m.id
-        JOIN samples s ON asp.sample_id = s.id
-        JOIN markers mk ON m.marker_id = mk.id
-        JOIN chromosomes c ON mk.chromosome_id = c.id
-        JOIN species sp ON c.species_id = sp.id
-        WHERE s.sample_code = ?
-        ORDER BY mk.marker_id, m.haplotype_name
-    """
-    return db.execute_query(query, (sample_code,))
+    """Get all alleles present in a sample from compressed lookup artifacts."""
+    sample_rows = db.execute_query(
+        "SELECT id, species_id FROM samples WHERE sample_code = ?",
+        (sample_code,),
+    )
+    if not sample_rows:
+        return []
+
+    sample_id = int(sample_rows[0]["id"])
+    species_id = int(sample_rows[0]["species_id"])
+    artifact_rows = db.execute_query(
+        """
+        SELECT artifact_path
+        FROM presence_artifacts
+        WHERE entity_type = 'sample_lookup'
+          AND species_id = ?
+        ORDER BY created_at DESC
+        """,
+        (species_id,),
+    )
+    microhaplotype_ids = set()
+    for artifact in artifact_rows:
+        try:
+            microhaplotype_ids.update(
+                read_microhaplotype_ids_for_entity(artifact["artifact_path"], sample_id)
+            )
+        except Exception:
+            continue
+    if not microhaplotype_ids:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    for chunk in _chunks(sorted(microhaplotype_ids)):
+        placeholders = ",".join(["?"] * len(chunk))
+        query = f"""
+            SELECT
+                m.haplotype_name,
+                1 as presence,
+                m.haplotype_sequence,
+                m.frequency,
+                mk.marker_id,
+                sp.name as species_name
+            FROM microhaplotypes m
+            JOIN markers mk ON m.marker_id = mk.id
+            JOIN chromosomes c ON mk.chromosome_id = c.id
+            JOIN species sp ON c.species_id = sp.id
+            WHERE m.id IN ({placeholders})
+            ORDER BY mk.marker_id, m.haplotype_name
+        """
+        results.extend(db.execute_query(query, tuple(chunk)))
+    return sorted(results, key=lambda r: (r.get("marker_id") or "", r.get("haplotype_name") or ""))
 
 
 def get_presence_statistics(
@@ -848,106 +958,125 @@ def get_presence_statistics(
     haplotype_name: str,
     species_id: int = None
 ) -> Dict[str, Any]:
-    """Get presence statistics for an allele.
+    """Get presence statistics for an allele from artifact summary rows.
 
     When species_id is provided, numerator and denominator are scoped to that
     species so the result matches the Haplotype Explorer frequency definition.
     """
-    # Get present count
-    query = """
-        SELECT COUNT(*) as present_samples
-        FROM allele_sample_presence asp
-        JOIN microhaplotypes m ON asp.microhaplotype_id = m.id
-        JOIN samples s ON asp.sample_id = s.id
+    summary_query = """
+        SELECT
+            mps.present_count,
+            mps.total_count,
+            mps.frequency
+        FROM microhaplotype_presence_summary mps
+        JOIN microhaplotypes m ON m.id = mps.microhaplotype_id
         WHERE m.haplotype_name = ?
+          AND mps.entity_type = 'sample'
     """
-    params = [haplotype_name]
+    params: List[Any] = [haplotype_name]
     if species_id:
-        query += " AND s.species_id = ?"
+        summary_query += " AND mps.species_id = ?"
         params.append(species_id)
+    summary_query += " ORDER BY mps.updated_at DESC"
+    summary_rows = db.execute_query(summary_query, tuple(params))
+    if summary_rows:
+        summary = summary_rows[0]
+        total = int(summary.get('total_count') or 0)
+        artifact_present = len(_get_entity_ids_for_haplotype_artifacts(db, haplotype_name, "sample"))
+        present = max(int(summary.get('present_count') or 0), artifact_present)
+        return {
+            'total_samples': total,
+            'present_samples': present,
+            'absent_samples': max(total - present, 0),
+            'presence_frequency': (present / total) if total else 0.0,
+        }
 
-    results = db.execute_query(query, tuple(params))
-    present_samples = results[0]['present_samples'] if results else 0
-    
-    # Get total samples count
-    total_query = "SELECT COUNT(*) as total FROM samples"
-    total_params = ()
-    if species_id:
-        total_query += " WHERE species_id = ?"
-        total_params = (species_id,)
-    total_results = db.execute_query(total_query, total_params)
-    total_samples = total_results[0]['total'] if total_results else 0
-    
-    absent_samples = total_samples - present_samples
-    presence_frequency = present_samples / total_samples if total_samples > 0 else 0.0
-    
+    artifact_present = len(_get_entity_ids_for_haplotype_artifacts(db, haplotype_name, "sample"))
+    if artifact_present:
+        total_query = "SELECT COUNT(*) AS total FROM samples"
+        total_params: Tuple[Any, ...] = ()
+        if species_id:
+            total_query += " WHERE species_id = ?"
+            total_params = (species_id,)
+        total_rows = db.execute_query(total_query, total_params)
+        total = int(total_rows[0].get("total") or 0) if total_rows else 0
+        return {
+            'total_samples': total,
+            'present_samples': artifact_present,
+            'absent_samples': max(total - artifact_present, 0),
+            'presence_frequency': (artifact_present / total) if total else 0.0,
+        }
+
     return {
-        'total_samples': total_samples,
-        'present_samples': present_samples,
-        'absent_samples': absent_samples,
-        'presence_frequency': presence_frequency
+        'total_samples': 0,
+        'present_samples': 0,
+        'absent_samples': 0,
+        'presence_frequency': 0.0,
     }
 
 
 
 def get_projects_for_allele_presence(db: DatabaseManager,
                                     haplotype_name: str) -> List[Dict[str, Any]]:
-    """Get projects with presence=1 for an allele via allele_project_presence.
-
-    Returns an empty list if the table does not exist (backwards compatible with older DBs).
-    """
-    try:
-        if not db.table_exists('allele_project_presence'):
-            return []
-    except Exception:
+    """Get projects with presence=1 for an allele from project artifacts."""
+    project_ids = _get_entity_ids_for_haplotype_artifacts(db, haplotype_name, "project")
+    if not project_ids:
         return []
 
-    query = """
-        SELECT
-            p.id,
-            p.project_code,
-            p.project_name,
-            p.pi_name,
-            p.pi_email,
-            p.pi_institution,
-            p.pi_department,
-            p.description,
-            p.start_date
-        FROM allele_project_presence app
-        JOIN microhaplotypes m ON app.microhaplotype_id = m.id
-        JOIN projects p ON app.project_id = p.id
-        WHERE m.haplotype_name = ?
-        ORDER BY p.project_code
-    """
-    return db.execute_query(query, (haplotype_name,))
+    results: List[Dict[str, Any]] = []
+    for chunk in _chunks(project_ids):
+        placeholders = ",".join(["?"] * len(chunk))
+        project_query = f"""
+            SELECT
+                p.id,
+                p.project_code,
+                p.project_name,
+                p.pi_name,
+                p.pi_email,
+                p.pi_institution,
+                p.pi_department,
+                p.description,
+                p.start_date
+            FROM projects p
+            WHERE p.id IN ({placeholders})
+            ORDER BY p.project_code
+        """
+        results.extend(db.execute_query(project_query, tuple(chunk)))
+    return sorted(results, key=lambda r: r.get("project_code") or "")
 
 
 def get_projects_for_sample_presence(db: DatabaseManager,
                                      haplotype_name: str) -> List[Dict[str, Any]]:
-    """Get projects linked to a microhaplotype via allele_sample_presence -> samples -> projects."""
-    query = """
-        SELECT
-            p.id,
-            p.project_code,
-            p.project_name,
-            p.pi_name,
-            p.pi_email,
-            p.pi_institution,
-            p.pi_department,
-            p.description,
-            p.start_date,
-            COUNT(DISTINCT s.id) as samples_with_haplotype
-        FROM allele_sample_presence asp
-        JOIN microhaplotypes m ON asp.microhaplotype_id = m.id
-        JOIN samples s ON asp.sample_id = s.id
-        JOIN projects p ON s.project_id = p.id
-        WHERE m.haplotype_name = ?
-        GROUP BY p.id, p.project_code, p.project_name,
-                 p.pi_name, p.pi_email, p.pi_institution,
-                 p.pi_department, p.description, p.start_date
-        ORDER BY samples_with_haplotype DESC
-    """
-    return db.execute_query(query, (haplotype_name,))
+    """Get projects linked to a microhaplotype through sample artifacts."""
+    sample_ids = _get_entity_ids_for_haplotype_artifacts(db, haplotype_name, "sample")
+    if not sample_ids:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    for chunk in _chunks(sample_ids):
+        placeholders = ",".join(["?"] * len(chunk))
+        project_query = f"""
+            SELECT
+                p.id,
+                p.project_code,
+                p.project_name,
+                p.pi_name,
+                p.pi_email,
+                p.pi_institution,
+                p.pi_department,
+                p.description,
+                p.start_date,
+                COUNT(DISTINCT s.id) as samples_with_haplotype
+            FROM samples s
+            JOIN projects p ON s.project_id = p.id
+            WHERE s.id IN ({placeholders})
+            GROUP BY p.id, p.project_code, p.project_name,
+                     p.pi_name, p.pi_email, p.pi_institution,
+                     p.pi_department, p.description, p.start_date
+            ORDER BY samples_with_haplotype DESC
+        """
+        results.extend(db.execute_query(project_query, tuple(chunk)))
+    return results
 
 
 _DAL_PATTERN = re.compile(r"DAl(\d{2})-(\d+)")
@@ -1019,80 +1148,72 @@ def _build_dal_sort_expr(
 def get_microhaplotype_accumulation_data(
     db: DatabaseManager, species_id: int
 ) -> List[Dict[str, Any]]:
-    """Get compact accumulation-series data (one row per sample).
+    """Get compact accumulation-series data from sample lookup artifacts.
 
     The result is ordered by DAl/DArT genotyping source then sample, and
     contains:
     - sample_index: 1-based order in the cumulative curve
     - project_id/project_name: project for that sample
     - cumulative_unique_microhaplotypes: cumulative discovered microhaplotypes
-
-    Tries ``allele_sample_presence`` first; falls back to
-    ``microhaplotype_samples`` when the presence table is empty.
     """
-    project_rows = _get_species_project_descriptions(db, species_id)
-    project_sort_expr = _build_dal_sort_expr(project_rows)
-
-    query_template = """
-        WITH species_samples AS (
-            SELECT DISTINCT
-                assoc.sample_id,
-                p.id AS project_id,
-                p.project_name
-            FROM {table} assoc
-            JOIN microhaplotypes m ON assoc.microhaplotype_id = m.id
-            JOIN markers mk ON m.marker_id = mk.id
-            JOIN chromosomes c ON mk.chromosome_id = c.id
-            JOIN samples s ON s.id = assoc.sample_id
-            JOIN projects p ON s.project_id = p.id
-            WHERE c.species_id = ?
-        ),
-        ordered_samples AS (
-            SELECT
-                ss.sample_id,
-                ss.project_id,
-                ss.project_name,
-                ROW_NUMBER() OVER (ORDER BY {project_sort_expr}, ss.sample_id) AS sample_index
-            FROM species_samples ss
-        ),
-        first_seen AS (
-            SELECT
-                assoc.microhaplotype_id,
-                MIN(os.sample_index) AS first_sample_index
-            FROM {table} assoc
-            JOIN ordered_samples os ON os.sample_id = assoc.sample_id
-            GROUP BY assoc.microhaplotype_id
-        ),
-        new_per_sample AS (
-            SELECT
-                first_sample_index AS sample_index,
-                COUNT(*) AS new_count
-            FROM first_seen
-            GROUP BY first_sample_index
-        )
+    samples_query = """
         SELECT
-            os.sample_index,
-            os.project_id,
-            os.project_name,
-            SUM(COALESCE(nps.new_count, 0)) OVER (
-                ORDER BY os.sample_index
-                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-            ) AS cumulative_unique_microhaplotypes
-        FROM ordered_samples os
-        LEFT JOIN new_per_sample nps ON os.sample_index = nps.sample_index
-        ORDER BY os.sample_index
+            s.id AS sample_id,
+            s.sample_code,
+            p.id AS project_id,
+            p.project_name,
+            p.description
+        FROM samples s
+        JOIN projects p ON s.project_id = p.id
+        WHERE s.species_id = ?
     """
+    sample_rows = db.execute_query(samples_query, (species_id,))
+    if not sample_rows:
+        return []
 
-    fmt = dict(table="allele_sample_presence", project_sort_expr=project_sort_expr)
-    query = query_template.format(**fmt)
-    results = db.execute_query(query, (species_id,))
+    artifact_rows = db.execute_query(
+        """
+        SELECT artifact_path
+        FROM presence_artifacts
+        WHERE species_id = ?
+          AND entity_type = 'sample_lookup'
+        ORDER BY created_at DESC
+        """,
+        (species_id,),
+    )
+    artifact_paths = [row["artifact_path"] for row in artifact_rows if row.get("artifact_path")]
+    if not artifact_paths:
+        return []
 
-    if not results or all(
-        (row.get("cumulative_unique_microhaplotypes") or 0) == 0 for row in results
-    ):
-        fmt["table"] = "microhaplotype_samples"
-        query = query_template.format(**fmt)
-        results = db.execute_query(query, (species_id,))
+    def sample_sort_key(row: Dict[str, Any]) -> tuple:
+        dal_key = _parse_dal_key(row.get("description"))
+        return (
+            0 if dal_key else 1,
+            dal_key or (9999, 999999999),
+            int(row.get("project_id") or 0),
+            int(row.get("sample_id") or 0),
+        )
+
+    ordered_samples = sorted(sample_rows, key=sample_sort_key)
+    seen_microhaplotypes = set()
+    results: List[Dict[str, Any]] = []
+    for sample_index, row in enumerate(ordered_samples, start=1):
+        sample_id = int(row["sample_id"])
+        for artifact_path in artifact_paths:
+            try:
+                seen_microhaplotypes.update(
+                    read_microhaplotype_ids_for_entity(artifact_path, sample_id)
+                )
+            except Exception:
+                continue
+        results.append(
+            {
+                "sample_index": sample_index,
+                "project_id": row.get("project_id"),
+                "project_name": row.get("project_name"),
+                "cumulative_unique_microhaplotypes": len(seen_microhaplotypes),
+            }
+        )
 
     return results
 

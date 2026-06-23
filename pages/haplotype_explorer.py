@@ -464,7 +464,7 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
                 species_sample_count = h.get('species_sample_count', 0)
                 sample_count = presence_stats.get('present_samples', 0)
                 if _is_missing_sample_context(species_sample_count) or _is_missing_sample_value(sample_count):
-                    sample_label = "Missing"
+                    sample_label = "Missing samples"
                 else:
                     sample_label = f"{sample_count} samples"
                 freq_val = presence_stats.get('presence_frequency')
@@ -562,10 +562,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
             # Get samples and projects
             samples_micro = get_samples_for_microhaplotype(db, haplotype_name)
 
-            # Projects can come from:
-            #   1. allele_sample_presence -> samples -> projects (primary path)
-            #   2. allele_project_presence (project-level presence matrix)
-            #   3. microhaplotype_samples (legacy associations)
+            # Projects can come from project artifacts and sample artifacts.
             projects_from_samples = get_projects_for_microhaplotype(db, haplotype_name)
             projects_from_presence = get_projects_for_allele_presence(db, haplotype_name)
             projects_from_sample_presence = get_projects_for_sample_presence(db, haplotype_name)
@@ -599,7 +596,6 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
             frequency = presence_stats.get('presence_frequency')
 
             # Use presence_samples as primary source (only samples with presence=1 for this haplotype)
-            # If no presence data, fall back to microhaplotype_samples
             if presence_samples:
                 samples = presence_samples
             else:
@@ -613,7 +609,10 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
             missing_samples_label = missing_sample_context or _is_missing_sample_value(
                 presence_stats.get('present_samples', 0)
             )
-            samples_button_label = "Samples (Missing)" if missing_samples_label else f"Samples ({samples_count})"
+            if missing_samples_label:
+                samples_button_label = "Samples (Missing samples)"
+            else:
+                samples_button_label = f"Samples ({samples_count})"
 
         # Store samples data in a separate callback output
         return html.Div([
@@ -660,7 +659,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                     dbc.Card([
                         dbc.CardBody([
                             html.H6(
-                                "Missing"
+                                "Missing samples"
                                 if missing_samples_label
                                 else f"{presence_stats.get('present_samples', 0)}",
                                 className="mb-0"

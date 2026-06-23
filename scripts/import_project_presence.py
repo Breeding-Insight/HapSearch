@@ -11,14 +11,9 @@ Project header convention (example):
   P01_Debby_Zhanyou_digestibility_16plates_DAl21-6679
 
 This importer:
-- Stores only presence=1 rows in allele_project_presence
+- Stores compressed allele-to-project and project-to-allele bitmap artifacts
 - Auto-creates missing projects using canonical project_code from mapping
 - Attempts a best-effort parse of owner/informal name/genotyping source for project fields
-
-Notes:
-- This is intentionally parallel to scripts/import_sample_presence.py (sample-level presence).
-- If your database was initialized before allele_project_presence existed, this script will
-  create the table/index automatically.
 """
 
 import os
@@ -33,7 +28,14 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.db_manager import DatabaseManager
-from database.bulk_import import bulk_load_presence, disable_constraints_and_indexes, restore_constraints_and_indexes
+from database.presence_artifacts import (
+    counts_by_microhaplotype,
+    ensure_presence_artifact_schema,
+    record_presence_artifact,
+    upsert_presence_summary,
+    write_presence_bitmap_artifact,
+    write_presence_lookup_artifact,
+)
 from scripts.presence_metadata import (
     genotyping_sources_match,
     get_mapping_for_project_code,
@@ -110,39 +112,10 @@ class ProjectPresenceImporter:
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        """Ensure allele_project_presence exists (lightweight migration)."""
+        """Ensure artifact metadata/summary tables exist."""
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                IF OBJECT_ID('dbo.allele_project_presence', 'U') IS NULL
-                BEGIN
-                    CREATE TABLE allele_project_presence (
-                        microhaplotype_id INT NOT NULL,
-                        project_id INT NOT NULL,
-                        PRIMARY KEY (microhaplotype_id, project_id),
-                        CONSTRAINT FK_allele_project_presence_microhaplotypes
-                            FOREIGN KEY (microhaplotype_id) REFERENCES microhaplotypes(id),
-                        CONSTRAINT FK_allele_project_presence_projects
-                            FOREIGN KEY (project_id) REFERENCES projects(id)
-                    )
-                END
-                """
-            )
-            cursor.execute(
-                """
-                IF NOT EXISTS (
-                    SELECT 1
-                    FROM sys.indexes
-                    WHERE name = 'idx_allele_project_presence_project'
-                      AND object_id = OBJECT_ID('dbo.allele_project_presence')
-                )
-                BEGIN
-                    CREATE INDEX idx_allele_project_presence_project
-                    ON allele_project_presence(project_id)
-                END
-                """
-            )
+            ensure_presence_artifact_schema(cursor)
 
     def import_project_presence(
         self,
@@ -150,7 +123,7 @@ class ProjectPresenceImporter:
         project_mapping_path: str,
         owner_contacts_path: str,
         verbose: bool = True,
-        staging_chunk_size: int = 500_000,
+        artifact_dir: Optional[str] = None,
     ) -> Dict[str, int]:
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"CSV file not found: {csv_path}")
@@ -315,6 +288,25 @@ class ProjectPresenceImporter:
 
             mh_ids = sorted(haplotype_id_map.values())
             proj_ids = sorted(set(project_id_cache.values()))
+            artifact_species_id: Optional[int] = None
+            if mh_ids:
+                species_ids = set()
+                for mh_chunk in chunked(mh_ids, in_clause_chunk):
+                    placeholders = ",".join(["?"] * len(mh_chunk))
+                    cursor.execute(
+                        f"""
+                        SELECT DISTINCT c.species_id
+                        FROM microhaplotypes m
+                        JOIN markers mk ON mk.id = m.marker_id
+                        JOIN chromosomes c ON c.id = mk.chromosome_id
+                        WHERE m.id IN ({placeholders})
+                        """,
+                        tuple(mh_chunk),
+                    )
+                    for row in cursor.fetchall():
+                        species_ids.add(int(row[0]))
+                if len(species_ids) == 1:
+                    artifact_species_id = next(iter(species_ids))
 
             project_col_list = [str(c).strip() for c in project_columns if str(c).strip()]
             project_id_array = np.array(
@@ -340,20 +332,51 @@ class ProjectPresenceImporter:
             if verbose:
                 print(f"  Built {len(pairs):,} presence pairs", flush=True)
 
-            disable_constraints_and_indexes(cursor, conn, "allele_project_presence", verbose)
-
-            try:
-                result = bulk_load_presence(
-                    cursor, conn,
-                    "allele_project_presence", "project_id",
-                    pairs, mh_ids, proj_ids,
-                    staging_chunk_size=staging_chunk_size,
-                    verbose=verbose,
+            if verbose:
+                print("  Writing compressed project presence artifacts...", flush=True)
+            ensure_presence_artifact_schema(cursor)
+            metadata = write_presence_bitmap_artifact(
+                pairs,
+                mh_ids,
+                proj_ids,
+                entity_type="project",
+                species_id=artifact_species_id,
+                source_path=csv_path,
+                output_dir=artifact_dir,
+            )
+            artifact_id = record_presence_artifact(cursor, metadata)
+            lookup_metadata = write_presence_lookup_artifact(
+                pairs,
+                mh_ids,
+                proj_ids,
+                entity_type="project_lookup",
+                species_id=artifact_species_id,
+                source_path=csv_path,
+                output_dir=artifact_dir,
+            )
+            record_presence_artifact(cursor, lookup_metadata)
+            if artifact_id and artifact_species_id is not None:
+                upsert_presence_summary(
+                    cursor,
+                    artifact_id=artifact_id,
+                    species_id=artifact_species_id,
+                    entity_type="project",
+                    total_count=len(proj_ids),
+                    counts_by_microhaplotype=counts_by_microhaplotype(pairs, mh_ids),
                 )
-                imported = result["inserted"]
-                deleted = result["deleted"]
-            finally:
-                restore_constraints_and_indexes(cursor, conn, "allele_project_presence", verbose)
+            conn.commit()
+            imported = len(pairs)
+            if verbose:
+                size_mb = (metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
+                lookup_size_mb = (lookup_metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
+                print(
+                    f"  Allele->project artifact: {metadata['artifact_path']} ({size_mb:.2f} MB)",
+                    flush=True,
+                )
+                print(
+                    f"  Project->allele artifact: {lookup_metadata['artifact_path']} ({lookup_size_mb:.2f} MB)",
+                    flush=True,
+                )
 
         elapsed = time.time() - start_time
         if verbose:
@@ -416,10 +439,8 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--staging-chunk-size",
-        type=int,
-        default=500_000,
-        help="Rows per staging-table commit chunk (controls log pressure, default 500000)",
+        "--presence-artifact-dir",
+        help="Directory for compressed presence artifacts (default: data/presence_artifacts)",
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
 
@@ -454,7 +475,7 @@ def main() -> None:
         args.project_mapping,
         args.owner_contacts,
         verbose=verbose,
-        staging_chunk_size=args.staging_chunk_size,
+        artifact_dir=args.presence_artifact_dir,
     )
 
 
