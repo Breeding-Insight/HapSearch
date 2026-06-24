@@ -245,6 +245,43 @@ def read_microhaplotype_ids_for_entity(artifact_path: str, entity_id: int) -> Li
         return [int(microhaplotype_ids[pos]) for pos in present_positions.tolist()]
 
 
+def load_lookup_artifact(artifact_path: str) -> Dict[str, object]:
+    """Load one entity-oriented lookup artifact for repeated row reads."""
+    with np.load(artifact_path, allow_pickle=False) as data:
+        entity_ids = data["entity_ids"].astype(np.int64, copy=True)
+        microhaplotype_ids = data["microhaplotype_ids"].astype(np.int64, copy=True)
+        packed_presence = data["packed_presence"].copy()
+        microhaplotype_count = int(data["microhaplotype_count"][0])
+
+    return {
+        "entity_ids": entity_ids,
+        "entity_index": {
+            int(entity_id): index
+            for index, entity_id in enumerate(entity_ids.tolist())
+        },
+        "microhaplotype_ids": microhaplotype_ids,
+        "packed_presence": packed_presence,
+        "microhaplotype_count": microhaplotype_count,
+    }
+
+
+def read_microhaplotype_ids_from_loaded_lookup(
+    artifact: Dict[str, object],
+    entity_id: int,
+) -> List[int]:
+    """Return microhaplotype IDs for an entity from a loaded lookup artifact."""
+    row_idx = artifact["entity_index"].get(int(entity_id))
+    if row_idx is None:
+        return []
+
+    microhaplotype_ids = artifact["microhaplotype_ids"]
+    microhaplotype_count = int(artifact["microhaplotype_count"])
+    packed = artifact["packed_presence"][row_idx]
+    bits = np.unpackbits(packed, bitorder="little")[:microhaplotype_count]
+    present_positions = np.flatnonzero(bits)
+    return [int(microhaplotype_ids[pos]) for pos in present_positions.tolist()]
+
+
 def ensure_presence_artifact_schema(cursor) -> None:
     """Create lightweight SQL metadata/summary tables for artifact-backed presence."""
     cursor.execute(

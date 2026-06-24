@@ -3,7 +3,10 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from database.queries import get_microhaplotypes_paginated
+from database.queries import (
+    _get_microhaplotype_ids_for_sample_filter_artifacts,
+    get_microhaplotypes_paginated,
+)
 
 
 class FakeDb:
@@ -19,7 +22,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
             self.skipTest(f"Dash dependencies are unavailable in this environment: {exc}")
         return explorer
 
-    def test_zero_frequency_filter_excludes_missing_sample_context(self):
+    def test_zero_frequency_filter_keeps_missing_sample_context(self):
         db = MagicMock()
         db.execute_query.side_effect = [[{"total": 0}], []]
 
@@ -32,12 +35,12 @@ class MicrohapMissingSampleTests(unittest.TestCase):
         )
 
         executed_count_query = db.execute_query.call_args_list[0][0][0]
-        self.assertIn(
+        self.assertNotIn(
             "AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)",
             executed_count_query,
         )
 
-    def test_frequency_range_starting_at_zero_applies_missing_guard(self):
+    def test_frequency_range_starting_at_zero_keeps_missing_sample_context(self):
         db = MagicMock()
         db.execute_query.side_effect = [[{"total": 0}], []]
 
@@ -50,12 +53,12 @@ class MicrohapMissingSampleTests(unittest.TestCase):
         )
 
         executed_count_query = db.execute_query.call_args_list[0][0][0]
-        self.assertIn(
+        self.assertNotIn(
             "AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)",
             executed_count_query,
         )
 
-    def test_positive_frequency_range_does_not_apply_missing_guard(self):
+    def test_positive_frequency_range_applies_missing_guard(self):
         db = MagicMock()
         db.execute_query.side_effect = [[{"total": 0}], []]
 
@@ -68,9 +71,77 @@ class MicrohapMissingSampleTests(unittest.TestCase):
         )
 
         executed_count_query = db.execute_query.call_args_list[0][0][0]
-        self.assertNotIn(
+        self.assertIn(
             "AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)",
             executed_count_query,
+        )
+        self.assertIn("AND COALESCE(m.sample_count, 0) > 0", executed_count_query)
+
+    def test_exclude_missing_samples_applies_missing_guard_without_frequency_filter(self):
+        db = MagicMock()
+        db.execute_query.side_effect = [[{"total": 0}], []]
+
+        get_microhaplotypes_paginated(
+            db,
+            exclude_missing_samples=True,
+            page=1,
+            per_page=25,
+        )
+
+        executed_count_query = db.execute_query.call_args_list[0][0][0]
+        self.assertIn(
+            "AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)",
+            executed_count_query,
+        )
+        self.assertIn("AND COALESCE(m.sample_count, 0) > 0", executed_count_query)
+
+    def test_sample_artifact_filter_does_not_truncate_after_sql_param_limit(self):
+        db = MagicMock()
+        db.execute_query.side_effect = [
+            [{"id": 99}],
+            [{"artifact_path": "/tmp/sample_lookup.npz"}],
+        ]
+
+        with patch(
+            "database.queries.read_microhaplotype_ids_for_entity",
+            return_value=list(range(1, 1803)),
+        ):
+            ids = _get_microhaplotype_ids_for_sample_filter_artifacts(
+                db,
+                "R_6410",
+                species_id=1,
+            )
+
+        self.assertEqual(len(ids), 1802)
+        self.assertEqual(ids[-1], 1802)
+
+    def test_sample_filter_uses_chunked_queries_when_artifact_ids_exceed_param_limit(self):
+        db = MagicMock()
+        db.execute_query.side_effect = [
+            [{"id": 2, "haplotype_name": "B"}],
+            [{"id": 1802, "haplotype_name": "A"}],
+        ]
+
+        with patch(
+            "database.queries._get_microhaplotype_ids_for_sample_filter_artifacts",
+            return_value=list(range(1, 1803)),
+        ):
+            result = get_microhaplotypes_paginated(
+                db,
+                species_id=1,
+                sample_filter="R_6410",
+                min_frequency=0.0,
+                max_frequency=0.0026,
+                page=1,
+                per_page=25,
+            )
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual([row["haplotype_name"] for row in result["microhaplotypes"]], ["A", "B"])
+        self.assertEqual(db.execute_query.call_count, 2)
+        self.assertIn(1802, db.execute_query.call_args_list[1][0][1])
+        self.assertTrue(
+            all(len(call_args[0][1]) <= 1800 for call_args in db.execute_query.call_args_list)
         )
 
     def test_search_results_label_missing_when_species_has_no_samples(self):
@@ -104,11 +175,13 @@ class MicrohapMissingSampleTests(unittest.TestCase):
                 chromosome_id=None,
                 sample_filter=None,
                 freq_range=[0.0, 100.0],
+                exclude_missing_samples=[],
                 current_page=1,
             )
 
         rendered = repr(result)
         self.assertIn("Missing", rendered)
+        self.assertIn("Freq: NA", rendered)
         self.assertNotIn("0 samples", rendered)
 
     def test_default_frequency_slider_applies_no_backend_bounds(self):
@@ -131,11 +204,13 @@ class MicrohapMissingSampleTests(unittest.TestCase):
                 chromosome_id=None,
                 sample_filter=None,
                 freq_range=[0.0, 100.0],
+                exclude_missing_samples=[],
                 current_page=1,
             )
 
         self.assertIsNone(mock_paginated.call_args.kwargs["min_frequency"])
         self.assertIsNone(mock_paginated.call_args.kwargs["max_frequency"])
+        self.assertFalse(mock_paginated.call_args.kwargs["exclude_missing_samples"])
 
     def test_piecewise_frequency_slider_resolves_low_end_values(self):
         explorer = self._import_explorer_or_skip()
@@ -192,6 +267,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
 
         self.assertEqual(toggle_children[1], "Samples (Missing samples)")
         self.assertIn("Missing", repr(detail))
+        self.assertIn("NA", repr(detail))
 
 
 if __name__ == "__main__":

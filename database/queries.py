@@ -6,10 +6,13 @@ from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
     read_entity_ids_for_microhaplotype,
     read_microhaplotype_ids_for_entity,
+    load_lookup_artifact,
+    read_microhaplotype_ids_from_loaded_lookup,
 )
 
 _PROJECT_PREFIX_RE = re.compile(r'^(P\d+)')
 _JUNK_PROJECT_NAMES = frozenset({'count', '12plates', '2plates'})
+_SAFE_SQL_PARAM_LIMIT = 1800
 
 
 def _normalize_pi_name(raw: str) -> str:
@@ -107,9 +110,38 @@ def _get_microhaplotype_ids_for_sample_filter_artifacts(
             except Exception:
                 continue
 
-    # SQL Server has a 2100-parameter limit. Keep this helper conservative; the
-    # sample search UI is intended for narrow sample-code searches.
-    return sorted(microhaplotype_ids)[:1800]
+    return sorted(microhaplotype_ids)
+
+
+def _run_chunked_microhaplotype_id_filter(
+    db: DatabaseManager,
+    ordered_query: str,
+    base_params: List[Any],
+    microhaplotype_ids: List[int],
+    page: int,
+    per_page: int,
+) -> Dict[str, Any]:
+    """Apply a large artifact-backed ID filter without truncating matches."""
+    query_no_order = ordered_query.rsplit(" ORDER BY ", 1)[0]
+    chunk_size = max(1, _SAFE_SQL_PARAM_LIMIT - len(base_params))
+    rows: List[Dict[str, Any]] = []
+
+    for chunk in _chunks(microhaplotype_ids, chunk_size):
+        placeholders = ",".join(["?"] * len(chunk))
+        chunk_query = f"{query_no_order} AND m.id IN ({placeholders})"
+        rows.extend(db.execute_query(chunk_query, tuple(base_params + chunk)))
+
+    rows.sort(key=lambda row: str(row.get("haplotype_name") or ""))
+    total = len(rows)
+    offset = (page - 1) * per_page
+
+    return {
+        'microhaplotypes': rows[offset:offset + per_page],
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': (total + per_page - 1) // per_page if per_page > 0 else 0
+    }
 
 
 def _get_entity_ids_for_haplotype_artifacts(
@@ -635,6 +667,7 @@ def get_microhaplotypes_paginated(
     sample_filter: str = None,
     min_frequency: float = None,
     max_frequency: float = None,
+    exclude_missing_samples: bool = False,
     page: int = 1,
     per_page: int = 25
 ) -> Dict[str, Any]:
@@ -663,6 +696,7 @@ def get_microhaplotypes_paginated(
         WHERE 1=1
     """
     params = []
+    chunked_sample_microhaplotype_ids = None
 
     if species_id:
         query += " AND sp.id = ?"
@@ -692,9 +726,13 @@ def get_microhaplotypes_paginated(
             species_id,
         )
         if artifact_microhaplotype_ids:
-            artifact_placeholders = ",".join(["?"] * len(artifact_microhaplotype_ids))
-            query += f" AND m.id IN ({artifact_placeholders})"
-            params.extend(artifact_microhaplotype_ids)
+            remaining_param_capacity = _SAFE_SQL_PARAM_LIMIT - len(params)
+            if len(artifact_microhaplotype_ids) <= remaining_param_capacity:
+                artifact_placeholders = ",".join(["?"] * len(artifact_microhaplotype_ids))
+                query += f" AND m.id IN ({artifact_placeholders})"
+                params.extend(artifact_microhaplotype_ids)
+            else:
+                chunked_sample_microhaplotype_ids = artifact_microhaplotype_ids
         else:
             query += " AND 1 = 0"
 
@@ -706,15 +744,25 @@ def get_microhaplotypes_paginated(
         query += " AND m.frequency <= ?"
         params.append(float(max_frequency))
 
-    # "Missing" sample context (species has no samples) should not be treated as
-    # true zero frequency when users filter specifically for 0.
-    if (
-        min_frequency is not None
-        and float(min_frequency) <= 0.0
-    ):
+    excludes_na_frequency = (
+        exclude_missing_samples
+        or (min_frequency is not None and float(min_frequency) > 0.0)
+    )
+    if excludes_na_frequency:
         query += " AND EXISTS (SELECT 1 FROM samples s3 WHERE s3.species_id = sp.id)"
+        query += " AND COALESCE(m.sample_count, 0) > 0"
 
     query += " ORDER BY m.haplotype_name"
+
+    if chunked_sample_microhaplotype_ids is not None:
+        return _run_chunked_microhaplotype_id_filter(
+            db,
+            query,
+            params,
+            chunked_sample_microhaplotype_ids,
+            page,
+            per_page,
+        )
 
     # Get total count
     query_no_order = query.rsplit(" ORDER BY ", 1)[0]
@@ -1194,18 +1242,25 @@ def get_microhaplotype_accumulation_data(
             int(row.get("sample_id") or 0),
         )
 
+    loaded_artifacts = []
+    for artifact_path in artifact_paths:
+        try:
+            loaded_artifacts.append(load_lookup_artifact(artifact_path))
+        except Exception:
+            continue
+
+    if not loaded_artifacts:
+        return []
+
     ordered_samples = sorted(sample_rows, key=sample_sort_key)
     seen_microhaplotypes = set()
     results: List[Dict[str, Any]] = []
     for sample_index, row in enumerate(ordered_samples, start=1):
         sample_id = int(row["sample_id"])
-        for artifact_path in artifact_paths:
-            try:
-                seen_microhaplotypes.update(
-                    read_microhaplotype_ids_for_entity(artifact_path, sample_id)
-                )
-            except Exception:
-                continue
+        for artifact in loaded_artifacts:
+            seen_microhaplotypes.update(
+                read_microhaplotype_ids_from_loaded_lookup(artifact, sample_id)
+            )
         results.append(
             {
                 "sample_index": sample_index,
