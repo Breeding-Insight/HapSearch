@@ -11,6 +11,7 @@ Goals 2 & 3 (marker and haplotype search) are available in dedicated explorer ta
 from dash import dcc, html, Input, Output, State, ctx, no_update, MATCH
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import sys
 import os
 
@@ -26,6 +27,7 @@ from database.queries import (
     get_database_statistics,
     get_allele_density_by_position,
     get_microhaplotype_accumulation_data,
+    get_microhaplotype_project_sharing_data,
     get_species_snapshot,
 )
 # Layout
@@ -81,7 +83,7 @@ layout = dbc.Container([
         ], width=12)
     ]),
 
-    # Microhaplotype Accumulation Curve
+    # Microhaplotype Accumulation + Sharing Distribution
     dbc.Row([
         dbc.Col([
             dbc.Card([
@@ -89,7 +91,7 @@ layout = dbc.Container([
                     html.I(className="fas fa-chart-line me-2"),
                     "Microhaplotype Accumulation Curve",
                     html.Small(
-                        " (Cumulative unique microhaplotypes discovered per sample)",
+                        " (Cumulative unique microhaplotypes discovered per sample/project)",
                         className="text-muted ms-2"
                     )
                 ]),
@@ -102,9 +104,26 @@ layout = dbc.Container([
                         type="default"
                     )
                 ])
-            ])
-        ], width=12)
-    ])
+            ], className="h-100 w-100")
+        ], lg=6, width=12, className="mb-4 d-flex"),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.I(className="fas fa-circle-nodes me-2"),
+                    "Microhaplotype Sharing Distribution"
+                ]),
+                dbc.CardBody([
+                    dcc.Loading(
+                        dcc.Graph(
+                            id='overview-sharing-chart',
+                            config={'displayModeBar': False}
+                        ),
+                        type="default"
+                    )
+                ])
+            ], className="h-100 w-100")
+        ], lg=6, width=12, className="mb-4 d-flex")
+    ], className="g-3 align-items-stretch")
 
 ], fluid=True)
 
@@ -489,12 +508,286 @@ def reset_density_chrom(_n_clicks, fig_dict):
     return out
 
 
+def _build_accumulation_figure(accumulation_rows):
+    """Build the cumulative microhaplotype discovery curve."""
+    x_vals = [row['sample_index'] for row in accumulation_rows]
+    y_vals = [row['cumulative_unique_microhaplotypes'] for row in accumulation_rows]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x_vals,
+        y=y_vals,
+        mode='lines',
+        line=dict(color=OVERVIEW_SINGLE_COLOR, width=2),
+        fill='tozeroy',
+        fillcolor=_hex_to_rgba(OVERVIEW_SINGLE_COLOR, 0.12),
+        hovertemplate=(
+            '<b>Sample/project #%{x}</b><br>'
+            'Cumulative unique microhaplotypes: %{y:,}<extra></extra>'
+        ),
+    ))
+    y_max = max(y_vals) * 1.15 if y_vals else 1
+    fig.update_layout(
+        xaxis_title="Samples added",
+        yaxis_title="Cumulative unique microhaplotypes",
+        xaxis=dict(fixedrange=True),
+        yaxis=dict(range=[0, y_max], fixedrange=True),
+        template="plotly_white",
+        height=500,
+        showlegend=False,
+        dragmode=False,
+        margin=dict(t=25, l=65, r=20, b=55),
+    )
+    return fig
+
+
+def _build_sharing_figure(sharing_data):
+    """Build the owner-group sharing distribution chart."""
+    projects = sharing_data.get("owner_groups") or sharing_data.get("projects") or []
+    intersections = sharing_data.get("intersections") or []
+
+    if not intersections or not projects:
+        return go.Figure().update_layout(
+            title="No project sharing data available",
+            template="plotly_white",
+            height=500,
+        )
+
+    fig = make_subplots(
+        rows=2,
+        cols=2,
+        specs=[
+            [{}, {}],
+            [{}, {}],
+        ],
+        column_widths=[0.24, 0.76],
+        row_heights=[0.62, 0.38],
+        horizontal_spacing=0.02,
+        vertical_spacing=0.04,
+    )
+
+    pattern_step = 1
+    pattern_x = list(range(1, len(intersections) + 1))
+    bar_counts = [row["microhaplotype_count"] for row in intersections]
+    category_colors = {
+        "common": OVERVIEW_BRAND_DARK_GREEN,
+        "shared": "#4f7f74",
+        "private": "#6b7280",
+    }
+    empty_category_colors = {
+        "common": "#d8e1dd",
+        "shared": "#dce7e5",
+        "private": "#e5e7eb",
+    }
+    bar_colors = [
+        category_colors.get(row["category"], OVERVIEW_SINGLE_COLOR)
+        if count
+        else empty_category_colors.get(row["category"], "#e5e7eb")
+        for row, count in zip(intersections, bar_counts)
+    ]
+    fig.add_trace(
+        go.Bar(
+            x=pattern_x,
+            y=bar_counts,
+            marker_color=bar_colors,
+            width=0.55,
+            text=[count if count else "" for count in bar_counts],
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate=(
+                "<b>%{y:,} microhaplotypes</b><br>"
+                "Shared allele group<extra></extra>"
+            ),
+        ),
+        row=1,
+        col=2,
+    )
+
+    project_ids = [
+        project.get("group_id", project.get("project_id"))
+        for project in projects
+    ]
+    project_labels = [project["label"] for project in projects]
+    project_names = {
+        project.get("group_id", project.get("project_id")): (
+            project.get("owner_name") or project.get("project_name")
+        )
+        for project in projects
+    }
+    group_counts = {project_id: 0 for project_id in project_ids}
+    for row in intersections:
+        count = int(row["microhaplotype_count"] or 0)
+        active_ids = row.get("group_ids") or row.get("project_ids") or []
+        for project_id in active_ids:
+            if project_id in group_counts:
+                group_counts[project_id] += count
+
+    row_step = 1
+    y_positions = [index * row_step for index in range(len(project_ids))]
+    project_y = {
+        project_id: y_position
+        for project_id, y_position in zip(project_ids, y_positions)
+    }
+    fig.add_trace(
+        go.Bar(
+            x=[group_counts[project_id] for project_id in project_ids],
+            y=y_positions,
+            orientation="h",
+            marker_color=OVERVIEW_SINGLE_COLOR,
+            width=0.28,
+            customdata=project_labels,
+            hovertemplate="%{customdata}: %{x:,} microhaplotypes<extra></extra>",
+            showlegend=False,
+        ),
+        row=2,
+        col=1,
+    )
+
+    all_bg_x = []
+    all_bg_y = []
+    for x in pattern_x:
+        for y in y_positions:
+            all_bg_x.append(x)
+            all_bg_y.append(y)
+
+    fig.add_trace(
+        go.Scatter(
+            x=all_bg_x,
+            y=all_bg_y,
+            mode="markers",
+            marker=dict(size=5, color="#d8d8d8"),
+            hoverinfo="skip",
+            showlegend=False,
+        ),
+        row=2,
+        col=2,
+    )
+
+    active_x = []
+    active_y = []
+    active_text = []
+    for x, row in zip(pattern_x, intersections):
+        active_ids = row.get("group_ids") or row.get("project_ids") or []
+        ys = [project_y[pid] for pid in active_ids if pid in project_y]
+        if len(ys) > 1:
+            fig.add_trace(
+                go.Scatter(
+                    x=[x, x],
+                    y=[min(ys), max(ys)],
+                    mode="lines",
+                    line=dict(color="#333333", width=1),
+                    hoverinfo="skip",
+                    showlegend=False,
+                ),
+                row=2,
+                col=2,
+            )
+        for pid in active_ids:
+            if pid not in project_y:
+                continue
+            active_x.append(x)
+            active_y.append(project_y[pid])
+            active_text.append(project_names.get(pid, f"Owner {pid}"))
+
+    fig.add_trace(
+        go.Scatter(
+            x=active_x,
+            y=active_y,
+            mode="markers",
+            marker=dict(size=6, color="#333333"),
+            text=active_text,
+            hovertemplate="%{text}<extra></extra>",
+            showlegend=False,
+        ),
+        row=2,
+        col=2,
+    )
+
+    start = 0
+    while start < len(intersections):
+        category = intersections[start]["category"]
+        end = start
+        while end + 1 < len(intersections) and intersections[end + 1]["category"] == category:
+            end += 1
+        color = category_colors.get(category, OVERVIEW_SINGLE_COLOR)
+        x0 = pattern_x[start] - (pattern_step / 2)
+        x1 = pattern_x[end] + (pattern_step / 2)
+        for subplot_row in (1, 2):
+            fig.add_vrect(
+                x0=x0,
+                x1=x1,
+                line_width=1,
+                line_color=color,
+                fillcolor=_hex_to_rgba(color, 0.035),
+                row=subplot_row,
+                col=2,
+            )
+        fig.add_annotation(
+            x=(x0 + x1) / 2,
+            y=1.07,
+            xref="x2",
+            yref="paper",
+            text=category.title(),
+            showarrow=False,
+            font=dict(color=color, size=11),
+        )
+        start = end + 1
+
+    bar_y_max = max(max(bar_counts) * 1.25, 1) if bar_counts else 1
+    group_x_max = max(max(group_counts.values()) * 1.15, 1) if group_counts else 1
+    fig.update_xaxes(visible=False, fixedrange=True, row=1, col=1)
+    fig.update_yaxes(visible=False, fixedrange=True, row=1, col=1)
+    fig.update_xaxes(showticklabels=False, fixedrange=True, row=1, col=2)
+    fig.update_yaxes(title_text="# Shared alleles", range=[0, bar_y_max], fixedrange=True, row=1, col=2)
+    fig.update_xaxes(
+        title_text="# Alleles (Total)",
+        range=[group_x_max, 0],
+        fixedrange=True,
+        row=2,
+        col=1,
+    )
+    fig.update_yaxes(
+        tickmode="array",
+        tickvals=y_positions,
+        ticktext=project_labels,
+        range=[y_positions[-1] + 0.45, -0.45],
+        fixedrange=True,
+        row=2,
+        col=1,
+    )
+    fig.update_xaxes(
+        title_text="",
+        tickmode="array",
+        tickvals=pattern_x,
+        ticktext=["" for _ in pattern_x],
+        fixedrange=True,
+        row=2,
+        col=2,
+    )
+    fig.update_yaxes(
+        showticklabels=False,
+        range=[y_positions[-1] + 0.45, -0.45],
+        fixedrange=True,
+        row=2,
+        col=2,
+    )
+    fig.update_layout(
+        template="plotly_white",
+        height=500,
+        showlegend=False,
+        dragmode=False,
+        margin=dict(t=55, l=20, r=15, b=55),
+        bargap=0.25,
+    )
+    return fig
+
+
 @app.callback(
     Output('overview-accumulation-chart', 'figure'),
     Input('selected-species-store', 'data')
 )
 def update_accumulation_curve(species_id):
-    """Cumulative unique microhaplotype discovery curve across samples."""
+    """Cumulative unique microhaplotype discovery curve."""
     empty = go.Figure().update_layout(template="plotly_white")
 
     if not species_id:
@@ -510,84 +803,31 @@ def update_accumulation_curve(species_id):
             empty.update_layout(title="No sample-microhaplotype data available")
             return empty
 
-        x_vals = [row['sample_index'] for row in rows]
-        y_vals = [row['cumulative_unique_microhaplotypes'] for row in rows]
+        return _build_accumulation_figure(rows)
 
-        # Track project transitions to optionally render separators.
-        project_boundaries = []
-        current_project = None
-        for row in rows:
-            pid = row['project_id']
-            if pid != current_project:
-                project_boundaries.append({
-                    'x': row['sample_index'],
-                    'name': row['project_name'],
-                })
-                current_project = pid
+    except Exception as e:
+        empty.update_layout(title=f"Error: {str(e)}")
+        return empty
 
-        # Label boundaries compactly for readability on large datasets:
-        # keep "Validation" as-is, number all other projects as #1, #2, ...
-        project_number = 1
-        for boundary in project_boundaries:
-            project_name = (boundary.get('name') or '').strip()
-            if project_name.lower() == 'validation':
-                boundary['label'] = 'Validation'
-            else:
-                boundary['label'] = f"#{project_number}"
-                project_number += 1
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=x_vals,
-            y=y_vals,
-            mode='lines',
-            line=dict(color=OVERVIEW_SINGLE_COLOR, width=2),
-            fill='tozeroy',
-            fillcolor=_hex_to_rgba(OVERVIEW_SINGLE_COLOR, 0.12),
-            hovertemplate=(
-                '<b>Sample #%{x}</b><br>'
-                'Unique microhaplotypes: %{y:,}<extra></extra>'
-            ),
-        ))
+@app.callback(
+    Output('overview-sharing-chart', 'figure'),
+    Input('selected-species-store', 'data')
+)
+def update_sharing_chart(species_id):
+    """Owner-group microhaplotype sharing distribution."""
+    empty = go.Figure().update_layout(template="plotly_white")
 
-        # Keep figure payload bounded for large datasets.
-        max_boundary_lines = 80
-        max_boundary_annotations = 20
-        boundary_count = len(project_boundaries)
-        if boundary_count <= max_boundary_lines:
-            for i, boundary in enumerate(project_boundaries):
-                annotate = boundary_count <= max_boundary_annotations
-                line_kwargs = {
-                    'x': boundary['x'],
-                    'line_dash': 'dash',
-                    'line_color': '#000000',
-                    'line_width': 1.5,
-                }
-                if annotate:
-                    line_kwargs.update({
-                        'annotation_text': boundary['label'],
-                        'annotation_position': 'top',
-                        'annotation_textangle': -35,
-                        'annotation_font_size': 10,
-                        'annotation_font_color': '#000000',
-                    })
-                fig.add_vline(**line_kwargs)
+    if not species_id:
+        empty.update_layout(title="Please select a species")
+        return empty
 
-        y_max = max(y_vals) * 1.15 if y_vals else 1
+    try:
+        db = DatabaseManager()
+        with db.shared_connection():
+            sharing_data = get_microhaplotype_project_sharing_data(db, species_id)
 
-        fig.update_layout(
-            xaxis_title="Cumulative Samples",
-            yaxis_title="Unique Microhaplotypes",
-            xaxis=dict(fixedrange=True),
-            yaxis=dict(range=[0, y_max], fixedrange=True),
-            template="plotly_white",
-            height=400,
-            showlegend=False,
-            dragmode=False,
-            margin=dict(t=60),
-        )
-
-        return fig
+        return _build_sharing_figure(sharing_data)
 
     except Exception as e:
         empty.update_layout(title=f"Error: {str(e)}")

@@ -1,7 +1,9 @@
 """SQL queries for HaploSearch features"""
 
+from collections import Counter, defaultdict
 import re
 from typing import List, Dict, Any, Optional, Tuple
+import numpy as np
 from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
     read_entity_ids_for_microhaplotype,
@@ -1196,13 +1198,17 @@ def _build_dal_sort_expr(
 def get_microhaplotype_accumulation_data(
     db: DatabaseManager, species_id: int
 ) -> List[Dict[str, Any]]:
-    """Get compact accumulation-series data from sample lookup artifacts.
+    """Get compact accumulation-series data from lookup artifacts.
 
-    The result is ordered by DAl/DArT genotyping source then sample, and
+    The result is ordered by DAl/DArT genotyping source then entity, and
     contains:
     - sample_index: 1-based order in the cumulative curve
-    - project_id/project_name: project for that sample
+    - project_id/project_name: project for that sample/project entity
     - cumulative_unique_microhaplotypes: cumulative discovered microhaplotypes
+
+    Sample-level presence drives the sample accumulation curve. Some imports
+    only have project-level presence matrices, so include project lookup rows
+    for projects that do not have species-matched sample rows.
     """
     samples_query = """
         SELECT
@@ -1216,24 +1222,59 @@ def get_microhaplotype_accumulation_data(
         WHERE s.species_id = ?
     """
     sample_rows = db.execute_query(samples_query, (species_id,))
-    if not sample_rows:
+
+    projects_query = """
+        SELECT
+            p.id AS project_id,
+            p.project_name,
+            p.description
+        FROM projects p
+        WHERE EXISTS (
+            SELECT 1
+            FROM presence_artifacts pa
+            WHERE pa.species_id = ?
+              AND pa.entity_type = 'project_lookup'
+        )
+    """
+    project_rows = db.execute_query(projects_query, (species_id,))
+    sample_project_ids = {
+        int(row["project_id"])
+        for row in sample_rows
+        if row.get("project_id") is not None
+    }
+    project_only_rows = [
+        row
+        for row in project_rows
+        if row.get("project_id") is not None
+        and int(row["project_id"]) not in sample_project_ids
+    ]
+    if not sample_rows and not project_only_rows:
         return []
 
     artifact_rows = db.execute_query(
         """
-        SELECT artifact_path
+        SELECT artifact_path, entity_type
         FROM presence_artifacts
         WHERE species_id = ?
-          AND entity_type = 'sample_lookup'
+          AND entity_type IN ('sample_lookup', 'project_lookup')
         ORDER BY created_at DESC
         """,
         (species_id,),
     )
-    artifact_paths = [row["artifact_path"] for row in artifact_rows if row.get("artifact_path")]
-    if not artifact_paths:
+    sample_artifact_paths = [
+        row["artifact_path"]
+        for row in artifact_rows
+        if row.get("artifact_path") and row.get("entity_type") == "sample_lookup"
+    ]
+    project_artifact_paths = [
+        row["artifact_path"]
+        for row in artifact_rows
+        if row.get("artifact_path") and row.get("entity_type") == "project_lookup"
+    ]
+    if not sample_artifact_paths and not project_artifact_paths:
         return []
 
-    def sample_sort_key(row: Dict[str, Any]) -> tuple:
+    def entity_sort_key(row: Dict[str, Any]) -> tuple:
         dal_key = _parse_dal_key(row.get("description"))
         return (
             0 if dal_key else 1,
@@ -1242,24 +1283,61 @@ def get_microhaplotype_accumulation_data(
             int(row.get("sample_id") or 0),
         )
 
-    loaded_artifacts = []
-    for artifact_path in artifact_paths:
+    loaded_sample_artifacts = []
+    for artifact_path in sample_artifact_paths:
         try:
-            loaded_artifacts.append(load_lookup_artifact(artifact_path))
+            loaded_sample_artifacts.append(load_lookup_artifact(artifact_path))
+        except Exception:
+            continue
+    loaded_project_artifacts = []
+    for artifact_path in project_artifact_paths:
+        try:
+            loaded_project_artifacts.append(load_lookup_artifact(artifact_path))
         except Exception:
             continue
 
-    if not loaded_artifacts:
+    if not loaded_sample_artifacts and not loaded_project_artifacts:
         return []
 
-    ordered_samples = sorted(sample_rows, key=sample_sort_key)
+    ordered_entities = sorted(
+        [
+            {
+                "entity_type": "sample",
+                "entity_id": int(row["sample_id"]),
+                "project_id": row.get("project_id"),
+                "project_name": row.get("project_name"),
+                "description": row.get("description"),
+                "sample_id": row.get("sample_id"),
+            }
+            for row in sample_rows
+            if row.get("sample_id") is not None
+        ]
+        + [
+            {
+                "entity_type": "project",
+                "entity_id": int(row["project_id"]),
+                "project_id": row.get("project_id"),
+                "project_name": row.get("project_name"),
+                "description": row.get("description"),
+                "sample_id": 0,
+            }
+            for row in project_only_rows
+        ],
+        key=entity_sort_key,
+    )
+
     seen_microhaplotypes = set()
     results: List[Dict[str, Any]] = []
-    for sample_index, row in enumerate(ordered_samples, start=1):
-        sample_id = int(row["sample_id"])
-        for artifact in loaded_artifacts:
+    for sample_index, row in enumerate(ordered_entities, start=1):
+        entity_id = int(row["entity_id"])
+        artifacts = (
+            loaded_sample_artifacts
+            if row["entity_type"] == "sample"
+            else loaded_project_artifacts
+        )
+        for artifact in artifacts:
             seen_microhaplotypes.update(
-                read_microhaplotype_ids_from_loaded_lookup(artifact, sample_id)
+                read_microhaplotype_ids_from_loaded_lookup(artifact, entity_id)
             )
         results.append(
             {
@@ -1271,6 +1349,181 @@ def get_microhaplotype_accumulation_data(
         )
 
     return results
+
+
+def get_microhaplotype_project_sharing_data(
+    db: DatabaseManager,
+    species_id: int,
+    max_intersections: int = 24,
+) -> Dict[str, Any]:
+    """Summarize microhaplotype sharing intersections across owner groups.
+
+    Returns UpSet-style intersection counts derived from project lookup artifacts.
+    Project owners are collapsed into Validation, BI-NPGS, and
+    Breeding (all). BI-NPGS is included as a placeholder row until location
+    classification is available.
+    """
+    if not species_id:
+        return {"owner_groups": [], "projects": [], "intersections": []}
+
+    artifact_rows = db.execute_query(
+        """
+        SELECT artifact_path
+        FROM presence_artifacts
+        WHERE species_id = ?
+          AND entity_type = 'project_lookup'
+        ORDER BY created_at DESC
+        """,
+        (species_id,),
+    )
+    artifact_paths = [
+        row["artifact_path"]
+        for row in artifact_rows
+        if row.get("artifact_path")
+    ]
+    if not artifact_paths:
+        return {"owner_groups": [], "projects": [], "intersections": []}
+
+    loaded_artifacts = []
+    for artifact_path in artifact_paths:
+        try:
+            loaded_artifacts.append(load_lookup_artifact(artifact_path))
+        except Exception:
+            continue
+    if not loaded_artifacts:
+        return {"owner_groups": [], "projects": [], "intersections": []}
+
+    microhaplotype_projects = defaultdict(set)
+    project_ids_seen = set()
+    for artifact in loaded_artifacts:
+        entity_ids = artifact["entity_ids"]
+        microhaplotype_ids = artifact["microhaplotype_ids"]
+        microhaplotype_count = int(artifact["microhaplotype_count"])
+        packed_presence = artifact["packed_presence"]
+
+        for row_idx, raw_project_id in enumerate(entity_ids.tolist()):
+            project_id = int(raw_project_id)
+            project_ids_seen.add(project_id)
+            bits = np.unpackbits(
+                packed_presence[row_idx],
+                bitorder="little",
+            )[:microhaplotype_count]
+            present_positions = np.flatnonzero(bits)
+            for pos in present_positions.tolist():
+                microhaplotype_projects[int(microhaplotype_ids[pos])].add(project_id)
+
+    if not project_ids_seen or not microhaplotype_projects:
+        return {"owner_groups": [], "projects": [], "intersections": []}
+
+    project_rows = db.execute_query(
+        """
+        SELECT
+            p.id AS project_id,
+            p.project_name,
+            p.description
+        FROM projects p
+        WHERE EXISTS (
+            SELECT 1
+            FROM presence_artifacts pa
+            WHERE pa.species_id = ?
+              AND pa.entity_type = 'project_lookup'
+        )
+        """,
+        (species_id,),
+    )
+    project_meta = {
+        int(row["project_id"]): row
+        for row in project_rows
+        if row.get("project_id") is not None
+    }
+
+    owner_groups = [
+        {
+            "group_id": "validation",
+            "label": "Validation",
+            "owner_name": "Validation",
+        },
+        {
+            "group_id": "bi_npgs",
+            "label": "BI-NPGS",
+            "owner_name": "BI-NPGS",
+        },
+        {
+            "group_id": "breeding",
+            "label": "Breeding (all)",
+            "owner_name": "Breeding (all)",
+        },
+    ]
+    group_order = {
+        group["group_id"]: index
+        for index, group in enumerate(owner_groups)
+    }
+
+    def owner_group_for_project(project_id: int) -> str:
+        meta = project_meta.get(project_id, {})
+        project_name = (meta.get("project_name") or f"Project {project_id}").strip()
+        if project_name.lower() == "validation":
+            return "validation"
+        # TODO: map BI-NPGS project locations here once location metadata is identified.
+        return "breeding"
+
+    pattern_counts = Counter(
+        tuple(
+            sorted(
+                {
+                    owner_group_for_project(project_id)
+                    for project_id in project_ids
+                },
+                key=lambda group_id: group_order.get(group_id, 999999),
+            )
+        )
+        for project_ids in microhaplotype_projects.values()
+        if project_ids
+    )
+    intersections = []
+    placeholder_patterns = [
+        ("validation", "bi_npgs", "breeding"),
+        ("validation", "bi_npgs"),
+        ("bi_npgs", "breeding"),
+        ("bi_npgs",),
+    ]
+    for pattern in placeholder_patterns:
+        pattern_counts.setdefault(pattern, 0)
+
+    for group_ids, count in pattern_counts.items():
+        group_count = len(group_ids)
+        if group_count == len(owner_groups):
+            category = "common"
+        elif group_count == 1:
+            category = "private"
+        else:
+            category = "shared"
+        intersections.append(
+            {
+                "group_ids": list(group_ids),
+                "project_ids": list(group_ids),
+                "project_count": group_count,
+                "microhaplotype_count": int(count),
+                "category": category,
+            }
+        )
+
+    intersections.sort(
+        key=lambda row: (
+            {"common": 0, "shared": 1, "private": 2}.get(row["category"], 3),
+            -row["project_count"],
+            -row["microhaplotype_count"],
+            [group_order.get(group_id, 999999) for group_id in row["group_ids"]],
+        )
+    )
+    if max_intersections and max_intersections > 0:
+        intersections = intersections[:max_intersections]
+
+    return {
+        "owner_groups": owner_groups,
+        "projects": owner_groups,
+        "intersections": intersections,
+    }
 
 
 def get_contacts_for_projects(db: DatabaseManager,
