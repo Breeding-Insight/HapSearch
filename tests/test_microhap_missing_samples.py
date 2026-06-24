@@ -103,7 +103,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
                 marker_filter=None,
                 chromosome_id=None,
                 sample_filter=None,
-                freq_range=[0.0, 1.0],
+                freq_range=[0.0, 100.0],
                 current_page=1,
             )
 
@@ -130,12 +130,26 @@ class MicrohapMissingSampleTests(unittest.TestCase):
                 marker_filter=None,
                 chromosome_id=None,
                 sample_filter=None,
-                freq_range=[0.0, 1.0],
+                freq_range=[0.0, 100.0],
                 current_page=1,
             )
 
         self.assertIsNone(mock_paginated.call_args.kwargs["min_frequency"])
         self.assertIsNone(mock_paginated.call_args.kwargs["max_frequency"])
+
+    def test_piecewise_frequency_slider_resolves_low_end_values(self):
+        explorer = self._import_explorer_or_skip()
+
+        self.assertEqual(explorer._resolve_frequency_bounds([0, 5]), (0.0, 0.001))
+        self.assertEqual(explorer._resolve_frequency_bounds([0, 25]), (0.0, 0.005))
+        self.assertEqual(explorer._resolve_frequency_bounds([0, 50]), (0.0, 0.01))
+
+    def test_numeric_frequency_values_map_to_piecewise_slider_positions(self):
+        explorer = self._import_explorer_or_skip()
+
+        self.assertEqual(explorer._frequency_to_slider_position(0.001), 5.0)
+        self.assertEqual(explorer._frequency_to_slider_position(0.005), 25.0)
+        self.assertEqual(explorer._frequency_to_slider_position(0.01), 50.0)
 
     def test_detail_panel_uses_missing_for_samples_when_species_has_none(self):
         explorer = self._import_explorer_or_skip()

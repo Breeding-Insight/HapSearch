@@ -51,17 +51,83 @@ def _require_ag_grid():
 
 
 DEFAULT_FREQUENCY_RANGE = (0.0, 1.0)
+DEFAULT_FREQUENCY_SLIDER_RANGE = (0.0, 100.0)
+DEFAULT_FREQUENCY_SLIDER_VALUE = [0.0, 100.0]
+FREQUENCY_SLIDER_BREAKPOINT = 50.0
+FREQUENCY_LOW_RANGE_MAX = 0.01
+FREQUENCY_INPUT_STEP = 0.0001
+
+
+def _clamp_frequency(value, default):
+    """Clamp a frequency-like value to the supported 0-1 range."""
+    try:
+        frequency = float(value)
+    except (TypeError, ValueError):
+        frequency = default
+    return max(DEFAULT_FREQUENCY_RANGE[0], min(DEFAULT_FREQUENCY_RANGE[1], frequency))
+
+
+def _clamp_slider_position(value, default):
+    """Clamp a piecewise slider position to the supported display range."""
+    try:
+        slider_position = float(value)
+    except (TypeError, ValueError):
+        slider_position = default
+    return max(
+        DEFAULT_FREQUENCY_SLIDER_RANGE[0],
+        min(DEFAULT_FREQUENCY_SLIDER_RANGE[1], slider_position),
+    )
+
+
+def _slider_position_to_frequency(position):
+    """Map the piecewise slider position to a real frequency."""
+    slider_position = _clamp_slider_position(position, DEFAULT_FREQUENCY_SLIDER_RANGE[0])
+
+    if slider_position <= FREQUENCY_SLIDER_BREAKPOINT:
+        return (slider_position / FREQUENCY_SLIDER_BREAKPOINT) * FREQUENCY_LOW_RANGE_MAX
+
+    high_fraction = (
+        (slider_position - FREQUENCY_SLIDER_BREAKPOINT)
+        / (DEFAULT_FREQUENCY_SLIDER_RANGE[1] - FREQUENCY_SLIDER_BREAKPOINT)
+    )
+    return FREQUENCY_LOW_RANGE_MAX + high_fraction * (
+        DEFAULT_FREQUENCY_RANGE[1] - FREQUENCY_LOW_RANGE_MAX
+    )
+
+
+def _frequency_to_slider_position(frequency):
+    """Map a real frequency to the piecewise slider position."""
+    frequency = _clamp_frequency(frequency, DEFAULT_FREQUENCY_RANGE[0])
+
+    if frequency <= FREQUENCY_LOW_RANGE_MAX:
+        return (frequency / FREQUENCY_LOW_RANGE_MAX) * FREQUENCY_SLIDER_BREAKPOINT
+
+    high_fraction = (frequency - FREQUENCY_LOW_RANGE_MAX) / (
+        DEFAULT_FREQUENCY_RANGE[1] - FREQUENCY_LOW_RANGE_MAX
+    )
+    return FREQUENCY_SLIDER_BREAKPOINT + high_fraction * (
+        DEFAULT_FREQUENCY_SLIDER_RANGE[1] - FREQUENCY_SLIDER_BREAKPOINT
+    )
+
+
+def _format_frequency_value(frequency):
+    """Keep input values readable while preserving low-end precision."""
+    return round(_clamp_frequency(frequency, DEFAULT_FREQUENCY_RANGE[0]), 6)
 
 
 def _resolve_frequency_bounds(freq_range):
     """Map UI slider values to query bounds. Default range means no filter."""
     if not isinstance(freq_range, (list, tuple)) or len(freq_range) != 2:
         return None, None
-    min_freq = float(freq_range[0])
-    max_freq = float(freq_range[1])
+
+    min_freq = _slider_position_to_frequency(freq_range[0])
+    max_freq = _slider_position_to_frequency(freq_range[1])
+    if min_freq > max_freq:
+        min_freq, max_freq = max_freq, min_freq
+
     if min_freq <= DEFAULT_FREQUENCY_RANGE[0] and max_freq >= DEFAULT_FREQUENCY_RANGE[1]:
         return None, None
-    return min_freq, max_freq
+    return _format_frequency_value(min_freq), _format_frequency_value(max_freq)
 
 
 def _is_missing_sample_context(species_sample_count):
@@ -191,22 +257,50 @@ layout = dbc.Container([
                             html.Div(
                                 dcc.RangeSlider(
                                     id='haplotype-frequency-range',
-                                    min=0.0,
-                                    max=1.0,
-                                    step=0.01,
-                                    value=[0.0, 1.0],
+                                    min=DEFAULT_FREQUENCY_SLIDER_RANGE[0],
+                                    max=DEFAULT_FREQUENCY_SLIDER_RANGE[1],
+                                    step=0.5,
+                                    value=list(DEFAULT_FREQUENCY_SLIDER_VALUE),
                                     className="haplo-frequency-range-slider",
                                     marks={
-                                        0.0: "0.0",
-                                        0.25: "0.25",
-                                        0.5: "0.5",
-                                        0.75: "0.75",
-                                        1.0: "1.0"
+                                        0: "0",
+                                        25: ".005",
+                                        50: ".01",
+                                        75: ".5",
+                                        100: "1"
                                     },
-                                    tooltip={"placement": "bottom", "always_visible": False}
+                                    tooltip={"always_visible": False}
                                 ),
                                 className="mt-1"
-                            )
+                            ),
+                            dbc.Row([
+                                dbc.Col([
+                                    dbc.Label("Min", html_for="haplotype-frequency-min-input", className="small text-muted mb-1"),
+                                    dbc.Input(
+                                        id="haplotype-frequency-min-input",
+                                        type="number",
+                                        min=DEFAULT_FREQUENCY_RANGE[0],
+                                        max=DEFAULT_FREQUENCY_RANGE[1],
+                                        step=FREQUENCY_INPUT_STEP,
+                                        value=DEFAULT_FREQUENCY_RANGE[0],
+                                        debounce=True,
+                                        size="sm",
+                                    ),
+                                ], width=6),
+                                dbc.Col([
+                                    dbc.Label("Max", html_for="haplotype-frequency-max-input", className="small text-muted mb-1"),
+                                    dbc.Input(
+                                        id="haplotype-frequency-max-input",
+                                        type="number",
+                                        min=DEFAULT_FREQUENCY_RANGE[0],
+                                        max=DEFAULT_FREQUENCY_RANGE[1],
+                                        step=FREQUENCY_INPUT_STEP,
+                                        value=DEFAULT_FREQUENCY_RANGE[1],
+                                        debounce=True,
+                                        size="sm",
+                                    ),
+                                ], width=6),
+                            ], className="g-2 mt-2")
                         ], id='haplotype-frequency-container')
                     ], id='haplotype-filters-body')
                 ], style={'flexShrink': '0'}, className="mb-2", id='haplotype-filters-card'),
@@ -324,11 +418,61 @@ def load_haplotype_chromosomes(species_id):
 
 @app.callback(
     Output('haplotype-frequency-range', 'value'),
+    Output('haplotype-frequency-min-input', 'value'),
+    Output('haplotype-frequency-max-input', 'value'),
     Input('haplotype-frequency-reset', 'n_clicks'),
+    Input('haplotype-frequency-range', 'value'),
+    Input('haplotype-frequency-min-input', 'value'),
+    Input('haplotype-frequency-max-input', 'value'),
     prevent_initial_call=True
 )
-def reset_haplotype_frequency_range(_n_clicks):
-    return [0.0, 1.0]
+def sync_haplotype_frequency_controls(_n_clicks, slider_value, min_input, max_input):
+    """Keep the piecewise slider and exact numeric inputs in sync."""
+    triggered = ctx.triggered_id if ctx.triggered else None
+
+    if triggered == 'haplotype-frequency-reset':
+        return (
+            list(DEFAULT_FREQUENCY_SLIDER_VALUE),
+            DEFAULT_FREQUENCY_RANGE[0],
+            DEFAULT_FREQUENCY_RANGE[1],
+        )
+
+    if triggered == 'haplotype-frequency-range':
+        if not isinstance(slider_value, (list, tuple)) or len(slider_value) != 2:
+            return (
+                list(DEFAULT_FREQUENCY_SLIDER_VALUE),
+                DEFAULT_FREQUENCY_RANGE[0],
+                DEFAULT_FREQUENCY_RANGE[1],
+            )
+
+        slider_min = _clamp_slider_position(slider_value[0], DEFAULT_FREQUENCY_SLIDER_RANGE[0])
+        slider_max = _clamp_slider_position(slider_value[1], DEFAULT_FREQUENCY_SLIDER_RANGE[1])
+        if slider_min > slider_max:
+            slider_min, slider_max = slider_max, slider_min
+
+        return (
+            [slider_min, slider_max],
+            _format_frequency_value(_slider_position_to_frequency(slider_min)),
+            _format_frequency_value(_slider_position_to_frequency(slider_max)),
+        )
+
+    min_freq = _clamp_frequency(min_input, DEFAULT_FREQUENCY_RANGE[0])
+    max_freq = _clamp_frequency(max_input, DEFAULT_FREQUENCY_RANGE[1])
+
+    if min_freq > max_freq:
+        if triggered == 'haplotype-frequency-min-input':
+            max_freq = min_freq
+        else:
+            min_freq = max_freq
+
+    return (
+        [
+            round(_frequency_to_slider_position(min_freq), 6),
+            round(_frequency_to_slider_position(max_freq), 6),
+        ],
+        _format_frequency_value(min_freq),
+        _format_frequency_value(max_freq),
+    )
 
 
 # Update page number
