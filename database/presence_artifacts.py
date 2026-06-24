@@ -20,7 +20,7 @@ def get_presence_artifact_dir() -> str:
     return getattr(
         config,
         "PRESENCE_ARTIFACT_DIR",
-        os.path.join(config.DATA_DIR, "presence_artifacts"),
+        "/srv/hapsearch/development/presence_artifacts",
     )
 
 

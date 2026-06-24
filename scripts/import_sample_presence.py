@@ -606,7 +606,11 @@ Example:
     parser.add_argument('--project-id', type=int, help='Deprecated: project now resolves from each filename')
     parser.add_argument(
         '--presence-artifact-dir',
-        help='Directory for compressed presence artifacts (default: data/presence_artifacts)'
+        help=(
+            'Directory for compressed presence artifacts '
+            '(default: /srv/hapsearch/production/presence_artifacts in production; '
+            '/srv/hapsearch/development/presence_artifacts otherwise)'
+        )
     )
     parser.add_argument('--quiet', action='store_true', help='Suppress verbose output')
 

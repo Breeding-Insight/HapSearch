@@ -23,7 +23,7 @@ The SQL Server schema has two presence-artifact tables:
 - `presence_artifacts`: one manifest row per compressed artifact file.
 - `microhaplotype_presence_summary`: one compact row per microhaplotype/species/entity type with present count, total count, frequency, and artifact ID.
 
-The compressed files live under `data/presence_artifacts` by default, or `PRESENCE_ARTIFACT_DIR` when configured.
+The compressed files live under `/srv/hapsearch/production/presence_artifacts` in production and `/srv/hapsearch/development/presence_artifacts` in development by default, or `PRESENCE_ARTIFACT_DIR` when configured.
 
 The sample importer:
 
@@ -470,7 +470,7 @@ Implementation status:
 - Presence import scripts now use one artifact-backed path. There is no user-facing storage choice.
 - Sample imports write both allele-to-sample and sample-to-allele compressed artifacts, plus SQL summary rows.
 - Project imports write both allele-to-project and project-to-allele compressed artifacts, plus SQL summary rows.
-- Compressed artifacts default to `data/presence_artifacts` or `PRESENCE_ARTIFACT_DIR`.
+- Compressed artifacts default to `/srv/hapsearch/production/presence_artifacts` in production and `/srv/hapsearch/development/presence_artifacts` in development, or `PRESENCE_ARTIFACT_DIR`.
 - Sample imports update `microhaplotypes.sample_count` and `microhaplotypes.frequency` from summary rows so existing frequency filters keep working.
 - The Haplotype Explorer's sample filter can resolve matching haplotypes through sample-oriented artifacts.
 - Allele detail sample/project panels can resolve through compressed artifacts.

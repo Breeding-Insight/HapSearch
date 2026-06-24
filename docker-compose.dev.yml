@@ -24,6 +24,7 @@ services:
       - ./auth:/app/auth
       - ./templates:/app/templates
       - ./alignment:/app/alignment
+      - /srv/hapsearch/development/presence_artifacts:/srv/hapsearch/development/presence_artifacts
       - /etc/ssl/certs/ifs-brin-01.pem:/cert.pem:ro
       - /etc/ssl/private/ifs-brin-01.key:/key.pem:ro
     env_file:
@@ -33,6 +34,7 @@ services:
       - DEBUG_MODE=true
       - APP_PORT=5000
       - MSSQL_DRIVER=ODBC Driver 18 for SQL Server
+      - PRESENCE_ARTIFACT_DIR=/srv/hapsearch/development/presence_artifacts
       - BYPASS_ORCID_AUTH=false
       - BYPASS_AUTH_WHITELIST=false
       - TLS_ENABLED=true
