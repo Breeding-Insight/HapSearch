@@ -1645,28 +1645,28 @@ def get_microhaplotype_project_sharing_data(
     }
 
     contact_details_by_project: Dict[int, List[Tuple[str, str]]] = defaultdict(list)
-    placeholders = ",".join(["?"] * len(project_ids_seen))
-    contact_rows = db.execute_query(
-        f"""
-        SELECT
-            pc.project_id,
-            c.institution,
-            c.location
-        FROM project_contacts pc
-        JOIN contacts c ON c.id = pc.contact_id
-        WHERE pc.project_id IN ({placeholders})
-          AND c.institution IS NOT NULL
-          AND c.institution <> ''
-        """,
-        tuple(sorted(project_ids_seen)),
-    )
-    for contact_row in contact_rows:
-        project_id = contact_row.get("project_id")
-        institution = (contact_row.get("institution") or "").strip()
-        location = (contact_row.get("location") or "").strip()
-        if project_id is not None and institution:
-            contact_details_by_project[int(project_id)].append((institution, location))
-
+    for chunk in _chunks(sorted(project_ids_seen)):
+        placeholders = ",".join(["?"] * len(chunk))
+        contact_rows = db.execute_query(
+            f"""
+            SELECT
+                pc.project_id,
+                c.institution,
+                c.location
+            FROM project_contacts pc
+            JOIN contacts c ON c.id = pc.contact_id
+            WHERE pc.project_id IN ({placeholders})
+              AND c.institution IS NOT NULL
+              AND c.institution <> ''
+            """,
+            tuple(chunk),
+        )
+        for contact_row in contact_rows:
+            project_id = contact_row.get("project_id")
+            institution = (contact_row.get("institution") or "").strip()
+            location = (contact_row.get("location") or "").strip()
+            if project_id is not None and institution:
+                contact_details_by_project[int(project_id)].append((institution, location))
     def program_group_id(institution: str, location: str) -> str:
         institution_slug = re.sub(r"[^a-z0-9]+", "-", institution.casefold()).strip("-")
         location_slug = re.sub(r"[^a-z0-9]+", "-", location.casefold()).strip("-")
