@@ -1103,12 +1103,12 @@ def get_projects_for_sample_presence(db: DatabaseManager,
     if not sample_ids:
         return []
 
-    results: List[Dict[str, Any]] = []
+    aggregated = {}
     for chunk in _chunks(sample_ids):
         placeholders = ",".join(["?"] * len(chunk))
         project_query = f"""
             SELECT
-                p.id,
+                p.id AS project_id,
                 p.project_code,
                 p.project_name,
                 p.pi_name,
@@ -1124,10 +1124,19 @@ def get_projects_for_sample_presence(db: DatabaseManager,
             GROUP BY p.id, p.project_code, p.project_name,
                      p.pi_name, p.pi_email, p.pi_institution,
                      p.pi_department, p.description, p.start_date
-            ORDER BY samples_with_haplotype DESC
         """
-        results.extend(db.execute_query(project_query, tuple(chunk)))
-    return results
+        for row in db.execute_query(project_query, tuple(chunk)):
+            pid = int(row["project_id"])
+            count = int(row.get("samples_with_haplotype") or 0)
+            if pid in aggregated:
+                aggregated[pid]["samples_with_haplotype"] += count
+            else:
+                aggregated[pid] = {**dict(row), "samples_with_haplotype": count}
+
+    return sorted(
+        aggregated.values(),
+        key=lambda r: (-int(r.get("samples_with_haplotype") or 0), r.get("project_code") or ""),
+    )
 
 
 _DAL_PATTERN = re.compile(r"DAl(\d{2})-(\d+)")
