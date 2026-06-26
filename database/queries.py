@@ -1625,19 +1625,23 @@ def get_microhaplotype_project_sharing_data(
             "intersections": [],
         }
 
-    project_placeholders = ",".join(["?"] * len(project_ids_seen))
-    project_rows = db.execute_query(
-        f"""
-        SELECT
-            p.id AS project_id,
-            p.project_name,
-            p.pi_institution,
-            p.description
-        FROM projects p
-        WHERE p.id IN ({project_placeholders})
-        """,
-        tuple(sorted(project_ids_seen)),
-    )
+    project_rows: List[Dict[str, Any]] = []
+    for chunk in _chunks(sorted(project_ids_seen)):
+        project_placeholders = ",".join(["?"] * len(chunk))
+        project_rows.extend(
+            db.execute_query(
+                f"""
+                SELECT
+                    p.id AS project_id,
+                    p.project_name,
+                    p.pi_institution,
+                    p.description
+                FROM projects p
+                WHERE p.id IN ({project_placeholders})
+                """,
+                tuple(chunk),
+            )
+        )
     project_meta = {
         int(row["project_id"]): row
         for row in project_rows
