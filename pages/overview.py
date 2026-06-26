@@ -1151,7 +1151,6 @@ def update_sharing_chart(species_id, selected_group_ids):
             sharing_data = get_microhaplotype_project_sharing_data(
                 db,
                 species_id,
-                max_intersections=0,
                 selected_group_ids=selected_group_ids,
             )
 
