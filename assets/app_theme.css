@@ -205,3 +205,27 @@
 .card-header {
   background-color: var(--app-card-header-bg) !important;
 }
+
+/* Overview loading regions reserve callback space so cards do not jump. */
+.overview-loading-region {
+  width: 100%;
+}
+
+.overview-graph-loading-region {
+  min-height: 500px;
+}
+
+.overview-top-loading-region {
+  height: 300px;
+  min-height: 300px;
+  overflow: hidden;
+}
+
+.overview-snapshot-loading-region {
+  min-height: 12rem;
+  width: 100%;
+}
+
+.overview-density-loading-region {
+  min-height: 34rem;
+}

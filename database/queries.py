@@ -1,6 +1,7 @@
 """SQL queries for HaploSearch features"""
 
 from collections import Counter, defaultdict
+import random
 import re
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
@@ -15,6 +16,7 @@ from database.presence_artifacts import (
 _PROJECT_PREFIX_RE = re.compile(r'^(P\d+)')
 _JUNK_PROJECT_NAMES = frozenset({'count', '12plates', '2plates'})
 _SAFE_SQL_PARAM_LIMIT = 1800
+_BYTE_POPCOUNT = np.array([int(value).bit_count() for value in range(256)], dtype=np.uint16)
 
 
 def _normalize_pi_name(raw: str) -> str:
@@ -865,10 +867,10 @@ def get_species_snapshot(db: DatabaseManager, species_id: int) -> Dict[str, Any]
         FROM microhaplotypes m
         JOIN markers mk ON m.marker_id = mk.id
         JOIN chromosomes c ON mk.chromosome_id = c.id
-        WHERE c.species_id = ? AND m.sample_count <= 1
+        WHERE c.species_id = ? AND m.sample_count = 1
     """
     rare_rows = db.execute_query(rare_query, (species_id,))
-    rare_alleles = (rare_rows[0]['rare_count'] if rare_rows else 0) or 0
+    rare_microhaplotypes = (rare_rows[0]['rare_count'] if rare_rows else 0) or 0
 
     return {
         'species_label': species_label,
@@ -877,7 +879,7 @@ def get_species_snapshot(db: DatabaseManager, species_id: int) -> Dict[str, Any]
         'avg_alleles_per_marker': avg_alleles,
         'sample_count': sample_count,
         'project_count': project_count,
-        'rare_alleles': rare_alleles,
+        'rare_microhaplotypes': rare_microhaplotypes,
     }
 
 
@@ -1196,7 +1198,9 @@ def _build_dal_sort_expr(
 
 
 def get_microhaplotype_accumulation_data(
-    db: DatabaseManager, species_id: int
+    db: DatabaseManager,
+    species_id: int,
+    max_result_points: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Get compact accumulation-series data from lookup artifacts.
 
@@ -1216,6 +1220,7 @@ def get_microhaplotype_accumulation_data(
             s.sample_code,
             p.id AS project_id,
             p.project_name,
+            p.pi_institution,
             p.description
         FROM samples s
         JOIN projects p ON s.project_id = p.id
@@ -1223,41 +1228,29 @@ def get_microhaplotype_accumulation_data(
     """
     sample_rows = db.execute_query(samples_query, (species_id,))
 
-    projects_query = """
-        SELECT
-            p.id AS project_id,
-            p.project_name,
-            p.description
-        FROM projects p
-        WHERE EXISTS (
-            SELECT 1
-            FROM presence_artifacts pa
-            WHERE pa.species_id = ?
-              AND pa.entity_type = 'project_lookup'
-        )
-    """
-    project_rows = db.execute_query(projects_query, (species_id,))
     sample_project_ids = {
         int(row["project_id"])
         for row in sample_rows
         if row.get("project_id") is not None
     }
-    project_only_rows = [
-        row
-        for row in project_rows
-        if row.get("project_id") is not None
-        and int(row["project_id"]) not in sample_project_ids
-    ]
-    if not sample_rows and not project_only_rows:
-        return []
 
     artifact_rows = db.execute_query(
         """
+        WITH ranked_artifacts AS (
+            SELECT
+                artifact_path,
+                entity_type,
+                ROW_NUMBER() OVER (
+                    PARTITION BY entity_type, source_path, project_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS artifact_rank
+            FROM presence_artifacts
+            WHERE species_id = ?
+              AND entity_type IN ('sample_lookup', 'project_lookup')
+        )
         SELECT artifact_path, entity_type
-        FROM presence_artifacts
-        WHERE species_id = ?
-          AND entity_type IN ('sample_lookup', 'project_lookup')
-        ORDER BY created_at DESC
+        FROM ranked_artifacts
+        WHERE artifact_rank = 1
         """,
         (species_id,),
     )
@@ -1299,6 +1292,132 @@ def get_microhaplotype_accumulation_data(
     if not loaded_sample_artifacts and not loaded_project_artifacts:
         return []
 
+    project_lookup_ids = sorted(
+        {
+            int(project_id)
+            for artifact in loaded_project_artifacts
+            for project_id in artifact["entity_ids"].tolist()
+        }
+    )
+    project_rows: List[Dict[str, Any]] = []
+    for chunk in _chunks(project_lookup_ids):
+        placeholders = ",".join(["?"] * len(chunk))
+        project_rows.extend(
+            db.execute_query(
+                f"""
+                SELECT
+                    p.id AS project_id,
+                    p.project_name,
+                    p.pi_institution,
+                    p.description
+                FROM projects p
+                WHERE p.id IN ({placeholders})
+                """,
+                tuple(chunk),
+            )
+        )
+    project_only_rows = [
+        row
+        for row in project_rows
+        if row.get("project_id") is not None
+        and int(row["project_id"]) not in sample_project_ids
+    ]
+    if not sample_rows and not project_only_rows:
+        return []
+
+    loaded_artifacts = loaded_sample_artifacts + loaded_project_artifacts
+    first_axis = loaded_artifacts[0]["microhaplotype_ids"]
+    first_axis_count = int(loaded_artifacts[0]["microhaplotype_count"])
+    can_use_packed_accumulation = all(
+        int(artifact["microhaplotype_count"]) == first_axis_count
+        and np.array_equal(artifact["microhaplotype_ids"], first_axis)
+        for artifact in loaded_artifacts
+    )
+    packed_row_width = None
+    if can_use_packed_accumulation:
+        packed_presence = loaded_artifacts[0]["packed_presence"]
+        packed_row_width = packed_presence.shape[1]
+
+    all_project_ids = {
+        int(row["project_id"])
+        for row in sample_rows + project_only_rows
+        if row.get("project_id") is not None
+    }
+    contact_details_by_project: Dict[int, List[Tuple[str, str]]] = defaultdict(list)
+    if all_project_ids:
+        placeholders = ",".join(["?"] * len(all_project_ids))
+        contact_rows = db.execute_query(
+            f"""
+            SELECT
+                pc.project_id,
+                c.institution,
+                c.location
+            FROM project_contacts pc
+            JOIN contacts c ON c.id = pc.contact_id
+            WHERE pc.project_id IN ({placeholders})
+              AND c.institution IS NOT NULL
+              AND c.institution <> ''
+            """,
+            tuple(sorted(all_project_ids)),
+        )
+        for contact_row in contact_rows:
+            project_id = contact_row.get("project_id")
+            institution = (contact_row.get("institution") or "").strip()
+            location = (contact_row.get("location") or "").strip()
+            if project_id is not None and institution:
+                contact_details_by_project[int(project_id)].append((institution, location))
+
+    def institution_location_labels(row: Dict[str, Any]) -> Tuple[str, str, str]:
+        details = []
+        project_id = row.get("project_id")
+        if project_id is not None:
+            details.extend(contact_details_by_project.get(int(project_id), []))
+        pi_institution = (row.get("pi_institution") or "").strip()
+        if pi_institution and not details:
+            details.append((pi_institution, ""))
+
+        unique_details = []
+        seen = set()
+        for institution, location in details:
+            key = (institution.casefold(), location.casefold())
+            if key not in seen:
+                seen.add(key)
+                unique_details.append((institution, location))
+
+        if not unique_details:
+            return "Unknown institution", "", "Unknown institution"
+
+        institutions = []
+        institution_keys = set()
+        locations = []
+        location_keys = set()
+        for institution, location in unique_details:
+            institution_key = institution.casefold()
+            if institution_key not in institution_keys:
+                institution_keys.add(institution_key)
+                institutions.append(institution)
+            if location:
+                location_key = location.casefold()
+                if location_key not in location_keys:
+                    location_keys.add(location_key)
+                    locations.append(location)
+
+        if len(institutions) <= 2:
+            institution_label = " / ".join(institutions)
+        else:
+            institution_label = f"{institutions[0]} + {len(institutions) - 1} more"
+
+        if len(locations) <= 2:
+            location_label = " / ".join(locations)
+        else:
+            location_label = f"{locations[0]} + {len(locations) - 1} more"
+
+        group_label = institution_label
+        if len(institutions) == 1 and location_label:
+            group_label = f"{institution_label} ({location_label})"
+
+        return institution_label, location_label, group_label
+
     ordered_entities = sorted(
         [
             {
@@ -1306,6 +1425,7 @@ def get_microhaplotype_accumulation_data(
                 "entity_id": int(row["sample_id"]),
                 "project_id": row.get("project_id"),
                 "project_name": row.get("project_name"),
+                "pi_institution": row.get("pi_institution"),
                 "description": row.get("description"),
                 "sample_id": row.get("sample_id"),
             }
@@ -1318,6 +1438,7 @@ def get_microhaplotype_accumulation_data(
                 "entity_id": int(row["project_id"]),
                 "project_id": row.get("project_id"),
                 "project_name": row.get("project_name"),
+                "pi_institution": row.get("pi_institution"),
                 "description": row.get("description"),
                 "sample_id": 0,
             }
@@ -1328,7 +1449,62 @@ def get_microhaplotype_accumulation_data(
 
     seen_microhaplotypes = set()
     results: List[Dict[str, Any]] = []
-    for sample_index, row in enumerate(ordered_entities, start=1):
+    output_indices = None
+    if (
+        max_result_points
+        and max_result_points > 0
+        and len(ordered_entities) > max_result_points
+    ):
+        output_indices = set(
+            int(index)
+            for index in np.unique(
+                np.linspace(0, len(ordered_entities) - 1, max_result_points, dtype=int)
+            ).tolist()
+        )
+
+    if packed_row_width is not None:
+        ordered_packed_rows = np.zeros(
+            (len(ordered_entities), packed_row_width),
+            dtype=loaded_artifacts[0]["packed_presence"].dtype,
+        )
+        for ordered_index, row in enumerate(ordered_entities):
+            entity_id = int(row["entity_id"])
+            artifacts = (
+                loaded_sample_artifacts
+                if row["entity_type"] == "sample"
+                else loaded_project_artifacts
+            )
+            for artifact in artifacts:
+                row_idx = artifact["entity_index"].get(entity_id)
+                if row_idx is not None:
+                    np.bitwise_or(
+                        ordered_packed_rows[ordered_index],
+                        artifact["packed_presence"][row_idx],
+                        out=ordered_packed_rows[ordered_index],
+                    )
+
+        cumulative_rows = np.bitwise_or.accumulate(ordered_packed_rows, axis=0)
+        cumulative_counts = _BYTE_POPCOUNT[cumulative_rows].sum(axis=1).astype(np.int64)
+
+        for ordered_index, row in enumerate(ordered_entities):
+            if output_indices is not None and ordered_index not in output_indices:
+                continue
+            institution_label, location_label, group_label = institution_location_labels(row)
+            results.append(
+                {
+                    "sample_index": ordered_index + 1,
+                    "project_id": row.get("project_id"),
+                    "project_name": row.get("project_name"),
+                    "institution_label": institution_label,
+                    "institution_location": location_label,
+                    "institution_group_label": group_label,
+                    "cumulative_unique_microhaplotypes": int(cumulative_counts[ordered_index]),
+                }
+            )
+
+        return results
+
+    for ordered_index, row in enumerate(ordered_entities):
         entity_id = int(row["entity_id"])
         artifacts = (
             loaded_sample_artifacts
@@ -1339,12 +1515,19 @@ def get_microhaplotype_accumulation_data(
             seen_microhaplotypes.update(
                 read_microhaplotype_ids_from_loaded_lookup(artifact, entity_id)
             )
+        if output_indices is not None and ordered_index not in output_indices:
+            continue
+        cumulative_unique_count = len(seen_microhaplotypes)
+        institution_label, location_label, group_label = institution_location_labels(row)
         results.append(
             {
-                "sample_index": sample_index,
+                "sample_index": ordered_index + 1,
                 "project_id": row.get("project_id"),
                 "project_name": row.get("project_name"),
-                "cumulative_unique_microhaplotypes": len(seen_microhaplotypes),
+                "institution_label": institution_label,
+                "institution_location": location_label,
+                "institution_group_label": group_label,
+                "cumulative_unique_microhaplotypes": cumulative_unique_count,
             }
         )
 
@@ -1355,16 +1538,20 @@ def get_microhaplotype_project_sharing_data(
     db: DatabaseManager,
     species_id: int,
     max_intersections: int = 24,
+    selected_group_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Summarize microhaplotype sharing intersections across owner groups.
+    """Summarize microhaplotype sharing intersections across selected groups.
 
     Returns UpSet-style intersection counts derived from project lookup artifacts.
-    Project owners are collapsed into Validation, BI-NPGS, and
-    Breeding (all). BI-NPGS is included as a placeholder row until location
-    classification is available.
+    Groups include Remaining Locations, Validation, and institution/location programs.
     """
     if not species_id:
-        return {"owner_groups": [], "projects": [], "intersections": []}
+        return {
+            "owner_groups": [],
+            "available_owner_groups": [],
+            "projects": [],
+            "intersections": [],
+        }
 
     artifact_rows = db.execute_query(
         """
@@ -1382,7 +1569,12 @@ def get_microhaplotype_project_sharing_data(
         if row.get("artifact_path")
     ]
     if not artifact_paths:
-        return {"owner_groups": [], "projects": [], "intersections": []}
+        return {
+            "owner_groups": [],
+            "available_owner_groups": [],
+            "projects": [],
+            "intersections": [],
+        }
 
     loaded_artifacts = []
     for artifact_path in artifact_paths:
@@ -1391,7 +1583,12 @@ def get_microhaplotype_project_sharing_data(
         except Exception:
             continue
     if not loaded_artifacts:
-        return {"owner_groups": [], "projects": [], "intersections": []}
+        return {
+            "owner_groups": [],
+            "available_owner_groups": [],
+            "projects": [],
+            "intersections": [],
+        }
 
     microhaplotype_projects = defaultdict(set)
     project_ids_seen = set()
@@ -1413,13 +1610,19 @@ def get_microhaplotype_project_sharing_data(
                 microhaplotype_projects[int(microhaplotype_ids[pos])].add(project_id)
 
     if not project_ids_seen or not microhaplotype_projects:
-        return {"owner_groups": [], "projects": [], "intersections": []}
+        return {
+            "owner_groups": [],
+            "available_owner_groups": [],
+            "projects": [],
+            "intersections": [],
+        }
 
     project_rows = db.execute_query(
         """
         SELECT
             p.id AS project_id,
             p.project_name,
+            p.pi_institution,
             p.description
         FROM projects p
         WHERE EXISTS (
@@ -1437,42 +1640,154 @@ def get_microhaplotype_project_sharing_data(
         if row.get("project_id") is not None
     }
 
-    owner_groups = [
+    contact_details_by_project: Dict[int, List[Tuple[str, str]]] = defaultdict(list)
+    placeholders = ",".join(["?"] * len(project_ids_seen))
+    contact_rows = db.execute_query(
+        f"""
+        SELECT
+            pc.project_id,
+            c.institution,
+            c.location
+        FROM project_contacts pc
+        JOIN contacts c ON c.id = pc.contact_id
+        WHERE pc.project_id IN ({placeholders})
+          AND c.institution IS NOT NULL
+          AND c.institution <> ''
+        """,
+        tuple(sorted(project_ids_seen)),
+    )
+    for contact_row in contact_rows:
+        project_id = contact_row.get("project_id")
+        institution = (contact_row.get("institution") or "").strip()
+        location = (contact_row.get("location") or "").strip()
+        if project_id is not None and institution:
+            contact_details_by_project[int(project_id)].append((institution, location))
+
+    def program_group_id(institution: str, location: str) -> str:
+        institution_slug = re.sub(r"[^a-z0-9]+", "-", institution.casefold()).strip("-")
+        location_slug = re.sub(r"[^a-z0-9]+", "-", location.casefold()).strip("-")
+        return f"program:{institution_slug or 'unknown'}:{location_slug or 'unknown-location'}"
+
+    group_catalog = [
         {
             "group_id": "validation",
             "label": "Validation",
             "owner_name": "Validation",
+            "kind": "preset",
         },
         {
-            "group_id": "bi_npgs",
-            "label": "BI-NPGS",
-            "owner_name": "BI-NPGS",
-        },
-        {
-            "group_id": "breeding",
-            "label": "Breeding (all)",
-            "owner_name": "Breeding (all)",
+            "group_id": "all",
+            "label": "Remaining Locations",
+            "owner_name": "Remaining Locations",
+            "kind": "preset",
         },
     ]
-    group_order = {
-        group["group_id"]: index
-        for index, group in enumerate(owner_groups)
-    }
+    groups_by_id = {group["group_id"]: group for group in group_catalog}
+    program_group_ids_by_project: Dict[int, List[str]] = defaultdict(list)
 
-    def owner_group_for_project(project_id: int) -> str:
+    for project_id in sorted(project_ids_seen):
+        meta = project_meta.get(project_id, {})
+        details = contact_details_by_project.get(project_id, [])
+        if not details:
+            pi_institution = (meta.get("pi_institution") or "").strip()
+            if pi_institution:
+                details = [(pi_institution, "")]
+
+        seen_details = set()
+        for institution, location in details:
+            key = (institution.casefold(), location.casefold())
+            if key in seen_details:
+                continue
+            seen_details.add(key)
+            group_id = program_group_id(institution, location)
+            program_group_ids_by_project[project_id].append(group_id)
+            if group_id not in groups_by_id:
+                label = institution if not location else f"{institution} ({location})"
+                groups_by_id[group_id] = {
+                    "group_id": group_id,
+                    "label": label,
+                    "owner_name": label,
+                    "institution": institution,
+                    "location": location,
+                    "kind": "program",
+                }
+                group_catalog.append(groups_by_id[group_id])
+
+    program_groups = [group for group in group_catalog if group.get("kind") == "program"]
+    program_groups.sort(key=lambda group: group["label"].casefold())
+    group_catalog = [
+        groups_by_id["validation"],
+        *program_groups,
+        groups_by_id["all"],
+    ]
+    group_order = {group["group_id"]: index for index, group in enumerate(group_catalog)}
+
+    def base_group_ids_for_project(project_id: int) -> List[str]:
         meta = project_meta.get(project_id, {})
         project_name = (meta.get("project_name") or f"Project {project_id}").strip()
+        group_ids = []
         if project_name.lower() == "validation":
-            return "validation"
-        # TODO: map BI-NPGS project locations here once location metadata is identified.
-        return "breeding"
+            group_ids.append("validation")
+        group_ids.extend(program_group_ids_by_project.get(project_id, []))
+        return sorted(set(group_ids), key=lambda group_id: group_order.get(group_id, 999999))
+
+    default_group_ids = ["validation"]
+    if len(program_groups) >= 2:
+        default_group_ids.extend(
+            group["group_id"] for group in random.sample(program_groups, 2)
+        )
+    elif program_groups:
+        default_group_ids.extend(group["group_id"] for group in program_groups)
+    else:
+        default_group_ids.append("all")
+
+    requested_group_ids = [
+        group_id
+        for group_id in (selected_group_ids or default_group_ids)
+        if group_id in groups_by_id
+    ]
+    if not requested_group_ids:
+        requested_group_ids = default_group_ids
+    selected_group_set = set(requested_group_ids)
+    owner_groups = [
+        group
+        for group in group_catalog
+        if group["group_id"] in selected_group_set
+    ]
+    remaining_group_id = "all"
+    selected_specific_group_ids = selected_group_set - {remaining_group_id}
+
+    def group_ids_for_project(project_id: int) -> List[str]:
+        base_group_ids = base_group_ids_for_project(project_id)
+        group_ids = [
+            group_id
+            for group_id in base_group_ids
+            if group_id in selected_specific_group_ids
+        ]
+        project_program_group_ids = set(program_group_ids_by_project.get(project_id, []))
+        has_unselected_program = any(
+            group_id not in selected_specific_group_ids
+            for group_id in project_program_group_ids
+        )
+        has_only_unclassified_nonvalidation_project = (
+            not project_program_group_ids
+            and "validation" not in base_group_ids
+        )
+        if (
+            remaining_group_id in selected_group_set
+            and (has_unselected_program or has_only_unclassified_nonvalidation_project)
+        ):
+            group_ids.append(remaining_group_id)
+        return sorted(set(group_ids), key=lambda group_id: group_order.get(group_id, 999999))
 
     pattern_counts = Counter(
         tuple(
             sorted(
                 {
-                    owner_group_for_project(project_id)
+                    group_id
                     for project_id in project_ids
+                    for group_id in group_ids_for_project(project_id)
+                    if group_id in selected_group_set
                 },
                 key=lambda group_id: group_order.get(group_id, 999999),
             )
@@ -1480,24 +1795,21 @@ def get_microhaplotype_project_sharing_data(
         for project_ids in microhaplotype_projects.values()
         if project_ids
     )
+    pattern_counts.pop((), None)
     intersections = []
-    placeholder_patterns = [
-        ("validation", "bi_npgs", "breeding"),
-        ("validation", "bi_npgs"),
-        ("bi_npgs", "breeding"),
-        ("bi_npgs",),
-    ]
-    for pattern in placeholder_patterns:
-        pattern_counts.setdefault(pattern, 0)
+    for group in owner_groups:
+        pattern_counts.setdefault((group["group_id"],), 0)
 
     for group_ids, count in pattern_counts.items():
+        if not group_ids:
+            continue
         group_count = len(group_ids)
         if group_count == len(owner_groups):
             category = "common"
         elif group_count == 1:
             category = "private"
         else:
-            category = "shared"
+            category = "rare"
         intersections.append(
             {
                 "group_ids": list(group_ids),
@@ -1510,17 +1822,41 @@ def get_microhaplotype_project_sharing_data(
 
     intersections.sort(
         key=lambda row: (
-            {"common": 0, "shared": 1, "private": 2}.get(row["category"], 3),
+            {"common": 0, "rare": 1, "private": 2}.get(row["category"], 3),
             -row["project_count"],
             -row["microhaplotype_count"],
             [group_order.get(group_id, 999999) for group_id in row["group_ids"]],
         )
     )
     if max_intersections and max_intersections > 0:
-        intersections = intersections[:max_intersections]
+        required_singletons = {
+            (group["group_id"],)
+            for group in owner_groups
+        }
+        selected_rows = intersections[:max_intersections]
+        selected_keys = {tuple(row["group_ids"]) for row in selected_rows}
+        missing_singletons = [
+            row
+            for row in intersections[max_intersections:]
+            if tuple(row["group_ids"]) in required_singletons
+            and tuple(row["group_ids"]) not in selected_keys
+        ]
+        if missing_singletons:
+            selected_rows = selected_rows + missing_singletons
+            selected_rows.sort(
+                key=lambda row: (
+                    {"common": 0, "rare": 1, "private": 2}.get(row["category"], 3),
+                    -row["project_count"],
+                    -row["microhaplotype_count"],
+                    [group_order.get(group_id, 999999) for group_id in row["group_ids"]],
+                )
+            )
+        intersections = selected_rows
 
     return {
         "owner_groups": owner_groups,
+        "available_owner_groups": group_catalog,
+        "default_group_ids": default_group_ids,
         "projects": owner_groups,
         "intersections": intersections,
     }

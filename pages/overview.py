@@ -10,6 +10,7 @@ Goals 2 & 3 (marker and haplotype search) are available in dedicated explorer ta
 
 from dash import dcc, html, Input, Output, State, ctx, no_update, MATCH
 import dash_bootstrap_components as dbc
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import sys
@@ -30,6 +31,110 @@ from database.queries import (
     get_microhaplotype_project_sharing_data,
     get_species_snapshot,
 )
+
+OVERVIEW_BRAND_DARK_GREEN = "#245842"
+OVERVIEW_DENSITY_COLOR = OVERVIEW_BRAND_DARK_GREEN
+OVERVIEW_SINGLE_COLOR = OVERVIEW_BRAND_DARK_GREEN
+PLOT_STATIC_CONFIG = {"displayModeBar": False}
+ACCUMULATION_PROJECTION_SAMPLES = 4000
+ACCUMULATION_MAX_PLOT_POINTS = 1200
+
+
+def _overview_loading(children, class_name="overview-loading-region"):
+    return dcc.Loading(
+        html.Div(children, className=class_name),
+        type="circle",
+        color="#319B42",
+    )
+
+
+def _plot_export_controls(
+    chart_key,
+    graph_id,
+    filename,
+    default_width=10,
+    default_height=6,
+):
+    """Build BIGapp-style image export controls for a Plotly chart."""
+    return html.Div(
+        [
+            dbc.DropdownMenu(
+                [
+                    html.Div(
+                        [
+                            html.H6("Save Image", className="mb-3"),
+                            html.Label("File", className="fw-bold small mb-1"),
+                            dbc.Select(
+                                id=f"overview-{chart_key}-image-type",
+                                options=[
+                                    {"label": "jpeg", "value": "jpeg"},
+                                    {"label": "png", "value": "png"},
+                                    {"label": "svg", "value": "svg"},
+                                ],
+                                value="png",
+                                size="sm",
+                                className="mb-3",
+                            ),
+                            html.Label("Resolution", className="fw-bold small mb-1"),
+                            dbc.Input(
+                                id=f"overview-{chart_key}-image-res",
+                                type="number",
+                                value=300,
+                                min=50,
+                                max=1000,
+                                step=50,
+                                size="sm",
+                                className="mb-3",
+                            ),
+                            html.Label("Width", className="fw-bold small mb-1"),
+                            dbc.Input(
+                                id=f"overview-{chart_key}-image-width",
+                                type="number",
+                                value=default_width,
+                                min=1,
+                                max=20,
+                                step=0.5,
+                                size="sm",
+                                className="mb-3",
+                            ),
+                            html.Label("Height", className="fw-bold small mb-1"),
+                            dbc.Input(
+                                id=f"overview-{chart_key}-image-height",
+                                type="number",
+                                value=default_height,
+                                min=1,
+                                max=20,
+                                step=0.5,
+                                size="sm",
+                                className="mb-3",
+                            ),
+                            html.Button(
+                                [html.I(className="fas fa-download me-2"), "Save Image"],
+                                id=f"overview-{chart_key}-save-image-btn",
+                                type="button",
+                                className="btn btn-primary btn-sm w-100",
+                                **{
+                                    "data-overview-export-chart": chart_key,
+                                    "data-overview-export-graph": graph_id,
+                                    "data-overview-export-filename": filename,
+                                },
+                            ),
+                        ],
+                        className="px-3 py-2",
+                        style={"width": "300px"},
+                    ),
+                ],
+                label=[html.I(className="fas fa-floppy-disk me-2"), "Save"],
+                color="danger",
+                size="sm",
+                align_end=True,
+                className="d-inline-block",
+            ),
+            html.Div(id=f"overview-{chart_key}-export-status", style={"display": "none"}),
+        ],
+        className="d-flex justify-content-end mb-2",
+    )
+
 # Layout
 layout = dbc.Container([
     #Chromosome Counts + Species Snapshot
@@ -41,9 +146,9 @@ layout = dbc.Container([
                     "Microhaplotype Counts per Chromosome"
                 ]),
                 dbc.CardBody([
-                    dcc.Loading(
+                    _overview_loading(
                         dcc.Graph(id='overview-chromosome-chart', config={'displayModeBar': False}),
-                        type="default"
+                        "overview-loading-region overview-top-loading-region",
                     )
                 ])
             ], className="h-100 w-100")
@@ -55,9 +160,9 @@ layout = dbc.Container([
                     "Species Snapshot"
                 ]),
                 dbc.CardBody([
-                    dcc.Loading(
+                    _overview_loading(
                         html.Div(id='overview-species-snapshot'),
-                        type="default"
+                        "overview-loading-region overview-top-loading-region",
                     )
                 ], className="d-flex")
             ], className="h-100 w-100")
@@ -74,9 +179,9 @@ layout = dbc.Container([
                     html.Small(" (microhapotypes counts at each genomic position)", className="text-muted ms-2")
                 ]),
                 dbc.CardBody([
-                    dcc.Loading(
+                    _overview_loading(
                         html.Div(id='overview-position-density-grid'),
-                        type="default"
+                        "overview-loading-region overview-density-loading-region",
                     )
                 ])
             ], className="mb-4")
@@ -90,18 +195,28 @@ layout = dbc.Container([
                 dbc.CardHeader([
                     html.I(className="fas fa-chart-line me-2"),
                     "Microhaplotype Accumulation Curve",
-                    html.Small(
-                        " (Cumulative unique microhaplotypes discovered per sample/project)",
-                        className="text-muted ms-2"
-                    )
                 ]),
                 dbc.CardBody([
-                    dcc.Loading(
+                    dbc.Button(
+                        [html.I(className="fas fa-play me-2"), "Load Curve"],
+                        id="overview-load-accumulation-btn",
+                        color="danger",
+                        size="sm",
+                        className="mb-2",
+                    ),
+                    _plot_export_controls(
+                        "accumulation",
+                        graph_id="overview-accumulation-chart",
+                        filename="microhaplotype_accumulation_curve",
+                        default_width=10,
+                        default_height=6,
+                    ),
+                    _overview_loading(
                         dcc.Graph(
                             id='overview-accumulation-chart',
-                            config={'displayModeBar': False}
+                            config=PLOT_STATIC_CONFIG
                         ),
-                        type="default"
+                        "overview-loading-region overview-graph-loading-region",
                     )
                 ])
             ], className="h-100 w-100")
@@ -113,12 +228,37 @@ layout = dbc.Container([
                     "Microhaplotype Sharing Distribution"
                 ]),
                 dbc.CardBody([
-                    dcc.Loading(
+                    html.Div(
+                        [
+                            html.Label(
+                                "Programs",
+                                htmlFor="overview-sharing-program-groups",
+                                className="fw-bold small mb-1",
+                            ),
+                            dcc.Dropdown(
+                                id="overview-sharing-program-groups",
+                                options=[],
+                                value=[],
+                                multi=True,
+                                clearable=False,
+                                placeholder="Choose programs",
+                            ),
+                        ],
+                        className="mb-3",
+                    ),
+                    _plot_export_controls(
+                        "sharing",
+                        graph_id="overview-sharing-chart",
+                        filename="microhaplotype_sharing_distribution",
+                        default_width=11,
+                        default_height=7.5,
+                    ),
+                    _overview_loading(
                         dcc.Graph(
                             id='overview-sharing-chart',
-                            config={'displayModeBar': False}
+                            config=PLOT_STATIC_CONFIG
                         ),
-                        type="default"
+                        "overview-loading-region overview-graph-loading-region",
                     )
                 ])
             ], className="h-100 w-100")
@@ -130,14 +270,94 @@ layout = dbc.Container([
 
 # Callbacks
 
-OVERVIEW_BRAND_DARK_GREEN = "#245842"
-OVERVIEW_DENSITY_COLOR = OVERVIEW_BRAND_DARK_GREEN
-OVERVIEW_SINGLE_COLOR = OVERVIEW_BRAND_DARK_GREEN
-
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     """Convert a #RRGGBB color string to rgba(r,g,b,a)."""
     rgb = tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
     return f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {alpha})"
+
+
+def _fit_accumulation_curve(x_vals, y_vals, projection_samples=0):
+    """Fit y = y0 + (A - y0) * (1 - exp(-k * (x - x0)))."""
+    if len(x_vals) < 4 or len(y_vals) < 4:
+        return None
+
+    x = np.asarray(x_vals, dtype=float)
+    y = np.asarray(y_vals, dtype=float)
+    finite_mask = np.isfinite(x) & np.isfinite(y)
+    x = x[finite_mask]
+    y = y[finite_mask]
+    if len(x) < 4:
+        return None
+
+    x0 = float(x[0])
+    y0 = float(y[0])
+    t = x - x0
+    y_current_max = float(np.max(y))
+    observed_gain = y_current_max - y0
+    if observed_gain <= 0 or float(np.max(t)) <= 0:
+        return None
+
+    asymptote_candidates = y_current_max + observed_gain * np.geomspace(0.02, 4.0, 220)
+    best_fit = None
+    t_squared_sum = float(np.sum(t * t))
+    if t_squared_sum <= 0:
+        return None
+
+    for asymptote in asymptote_candidates:
+        denominator = asymptote - y0
+        if denominator <= 0 or np.any(asymptote <= y):
+            continue
+
+        ratios = (asymptote - y) / denominator
+        if np.any(ratios <= 0):
+            continue
+
+        log_ratios = np.log(ratios)
+        k = -float(np.sum(t * log_ratios) / t_squared_sum)
+        if not np.isfinite(k) or k <= 0:
+            continue
+
+        fitted_y = y0 + (asymptote - y0) * (1 - np.exp(-k * t))
+        sse = float(np.sum((y - fitted_y) ** 2))
+        if best_fit is None or sse < best_fit["sse"]:
+            best_fit = {
+                "asymptote": float(asymptote),
+                "k": k,
+                "sse": sse,
+                "fitted_y": fitted_y,
+            }
+
+    if not best_fit:
+        return None
+
+    sst = float(np.sum((y - float(np.mean(y))) ** 2))
+    r_squared = 1 - (best_fit["sse"] / sst) if sst > 0 else None
+    x_fit_max = float(np.max(x)) + max(float(projection_samples), 0)
+    x_fit = np.linspace(float(np.min(x)), x_fit_max, 300)
+    t_fit = x_fit - x0
+    y_fit = y0 + (best_fit["asymptote"] - y0) * (1 - np.exp(-best_fit["k"] * t_fit))
+
+    return {
+        "x": x_fit.tolist(),
+        "y": y_fit.tolist(),
+        "x0": x0,
+        "y0": y0,
+        "asymptote": best_fit["asymptote"],
+        "k": best_fit["k"],
+        "r_squared": r_squared,
+        "observed_x_max": float(np.max(x)),
+        "projected_x_max": x_fit_max,
+    }
+
+
+def _downsample_accumulation_rows(accumulation_rows, max_points=ACCUMULATION_MAX_PLOT_POINTS):
+    """Keep a deterministic, first-to-last sample of large accumulation curves."""
+    row_count = len(accumulation_rows)
+    if max_points <= 0 or row_count <= max_points:
+        return accumulation_rows
+
+    sampled_indices = np.linspace(0, row_count - 1, max_points, dtype=int)
+    return [accumulation_rows[index] for index in np.unique(sampled_indices)]
 
 
 def _build_density_color_map(items):
@@ -218,7 +438,7 @@ SNAPSHOT_TILES = [
     {'key': 'avg_alleles_per_marker', 'label': 'Avg. microhapotypes / Loci', 'icon': 'fas fa-layer-group'},
     {'key': 'sample_count',           'label': 'Samples',               'icon': 'fas fa-vial'},
     {'key': 'project_count',          'label': 'Contributing Projects', 'icon': 'fas fa-folder-open'},
-    {'key': 'rare_alleles',           'label': 'Rare microhapotypes',   'icon': 'fas fa-gem',
+    {'key': 'rare_microhaplotypes',   'label': 'Rare microhapotypes',   'icon': 'fas fa-gem',
      'tooltip': 'Microhapotypes observed in only one sample across all projects'},
 ]
 
@@ -265,7 +485,7 @@ def _snapshot_tile(icon_cls: str, value, label: str, tooltip: str = None):
                         html.Div(
                             str(value),
                             style={
-                                'fontSize': '1.45rem',
+                                'fontSize': '1.28rem',
                                 'fontWeight': '700',
                                 'lineHeight': '1.15',
                                 'color': '#212529',
@@ -274,7 +494,7 @@ def _snapshot_tile(icon_cls: str, value, label: str, tooltip: str = None):
                         html.Div(
                             label_children,
                             style={
-                                'fontSize': '0.76rem',
+                                'fontSize': '0.72rem',
                                 'color': '#1f2933',
                                 'lineHeight': '1.2',
                             }
@@ -288,8 +508,8 @@ def _snapshot_tile(icon_cls: str, value, label: str, tooltip: str = None):
                 'alignItems': 'center',
                 'gap': '0.55rem',
                 'flex': '1 1 auto',
-                'minHeight': '78px',
-                'padding': '0.75rem 0.9rem',
+                'minHeight': '62px',
+                'padding': '0.55rem 0.75rem',
                 'backgroundColor': '#ffffff',
                 'borderRadius': '8px',
                 'border': '1px solid #245842',
@@ -510,28 +730,73 @@ def reset_density_chrom(_n_clicks, fig_dict):
 
 def _build_accumulation_figure(accumulation_rows):
     """Build the cumulative microhaplotype discovery curve."""
-    x_vals = [row['sample_index'] for row in accumulation_rows]
-    y_vals = [row['cumulative_unique_microhaplotypes'] for row in accumulation_rows]
+    plot_rows = _downsample_accumulation_rows(accumulation_rows)
+    x_vals = [row['sample_index'] for row in plot_rows]
+    y_vals = [row['cumulative_unique_microhaplotypes'] for row in plot_rows]
+    hover_metadata = [
+        (
+            row.get("institution_label") or "Unknown institution",
+            row.get("institution_location") or "Unknown location",
+            row.get("project_name") or "Unknown project",
+        )
+        for row in plot_rows
+    ]
+    fit = _fit_accumulation_curve(
+        x_vals,
+        y_vals,
+        projection_samples=ACCUMULATION_PROJECTION_SAMPLES,
+    )
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=x_vals,
         y=y_vals,
+        customdata=hover_metadata,
         mode='lines',
         line=dict(color=OVERVIEW_SINGLE_COLOR, width=2),
         fill='tozeroy',
         fillcolor=_hex_to_rgba(OVERVIEW_SINGLE_COLOR, 0.12),
+        name="Observed",
         hovertemplate=(
-            '<b>Sample/project #%{x}</b><br>'
+            '<b>Sample #%{x}</b><br>'
+            'Institution: %{customdata[0]}<br>'
+            'Location: %{customdata[1]}<br>'
+            'Project: %{customdata[2]}<br>'
             'Cumulative unique microhaplotypes: %{y:,}<extra></extra>'
         ),
     ))
-    y_max = max(y_vals) * 1.15 if y_vals else 1
+
+    y_max_candidates = list(y_vals)
+    if fit:
+        fig.add_trace(go.Scatter(
+            x=fit["x"],
+            y=fit["y"],
+            mode='lines',
+            line=dict(color="#6b7280", width=2, dash="dash"),
+            name="Projection",
+            hovertemplate=(
+                '<b>Projection</b><br>'
+                'Sample: %{x:,.0f}<br>'
+                'Estimated cumulative microhaplotypes: %{y:,.0f}<extra></extra>'
+            ),
+        ))
+        y_max_candidates.extend(fit["y"])
+
+    y_max = max(y_max_candidates) * 1.15 if y_max_candidates else 1
     fig.update_layout(
         xaxis_title="Samples added",
         yaxis_title="Cumulative unique microhaplotypes",
-        xaxis=dict(fixedrange=True),
-        yaxis=dict(range=[0, y_max], fixedrange=True),
+        xaxis=dict(
+            range=[
+                min(x_vals) if x_vals else 0,
+                fit["projected_x_max"] if fit else (max(x_vals) if x_vals else 1),
+            ],
+            fixedrange=True,
+        ),
+        yaxis=dict(
+            range=[0, y_max],
+            fixedrange=True,
+        ),
         template="plotly_white",
         height=500,
         showlegend=False,
@@ -569,14 +834,40 @@ def _build_sharing_figure(sharing_data):
     pattern_step = 1
     pattern_x = list(range(1, len(intersections) + 1))
     bar_counts = [row["microhaplotype_count"] for row in intersections]
+    project_ids = [
+        project.get("group_id", project.get("project_id"))
+        for project in projects
+    ]
+    project_labels = [project["label"] for project in projects]
+    project_names = {
+        project.get("group_id", project.get("project_id")): (
+            project.get("owner_name") or project.get("project_name")
+        )
+        for project in projects
+    }
+    project_labels_by_id = dict(zip(project_ids, project_labels))
+    intersection_hover_data = [
+        [
+            {
+                "common": "Common",
+                "rare": "Rare",
+                "private": "Private",
+            }.get(row.get("category"), row.get("category", "").title()),
+            " + ".join(
+                project_labels_by_id.get(group_id, str(group_id))
+                for group_id in (row.get("group_ids") or row.get("project_ids") or [])
+            ),
+        ]
+        for row in intersections
+    ]
     category_colors = {
         "common": OVERVIEW_BRAND_DARK_GREEN,
-        "shared": "#4f7f74",
+        "rare": "#4f7f74",
         "private": "#6b7280",
     }
     empty_category_colors = {
         "common": "#d8e1dd",
-        "shared": "#dce7e5",
+        "rare": "#dce7e5",
         "private": "#e5e7eb",
     }
     bar_colors = [
@@ -593,27 +884,23 @@ def _build_sharing_figure(sharing_data):
             width=0.55,
             text=[count if count else "" for count in bar_counts],
             textposition="outside",
+            textfont=dict(
+                size=11,
+                family="Arial, sans-serif",
+                color="#1f2933",
+            ),
             cliponaxis=False,
+            customdata=intersection_hover_data,
             hovertemplate=(
                 "<b>%{y:,} microhaplotypes</b><br>"
-                "Shared allele group<extra></extra>"
+                "%{customdata[0]} intersection<br>"
+                "%{customdata[1]}<extra></extra>"
             ),
         ),
         row=1,
         col=2,
     )
 
-    project_ids = [
-        project.get("group_id", project.get("project_id"))
-        for project in projects
-    ]
-    project_labels = [project["label"] for project in projects]
-    project_names = {
-        project.get("group_id", project.get("project_id")): (
-            project.get("owner_name") or project.get("project_name")
-        )
-        for project in projects
-    }
     group_counts = {project_id: 0 for project_id in project_ids}
     for row in intersections:
         count = int(row["microhaplotype_count"] or 0)
@@ -710,6 +997,11 @@ def _build_sharing_figure(sharing_data):
         while end + 1 < len(intersections) and intersections[end + 1]["category"] == category:
             end += 1
         color = category_colors.get(category, OVERVIEW_SINGLE_COLOR)
+        category_label = {
+            "common": "Common",
+            "rare": "Rare",
+            "private": "Private",
+        }.get(category, category.title())
         x0 = pattern_x[start] - (pattern_step / 2)
         x1 = pattern_x[end] + (pattern_step / 2)
         for subplot_row in (1, 2):
@@ -724,21 +1016,32 @@ def _build_sharing_figure(sharing_data):
             )
         fig.add_annotation(
             x=(x0 + x1) / 2,
-            y=1.07,
+            y=1.08,
             xref="x2",
             yref="paper",
-            text=category.title(),
+            text=f"<b>{category_label}</b>",
             showarrow=False,
-            font=dict(color=color, size=11),
+            font=dict(
+                color=color,
+                size=13,
+                family="Arial, sans-serif",
+            ),
         )
         start = end + 1
 
     bar_y_max = max(max(bar_counts) * 1.25, 1) if bar_counts else 1
     group_x_max = max(max(group_counts.values()) * 1.15, 1) if group_counts else 1
+    pattern_x_range = [0.5, len(intersections) + 0.5]
     fig.update_xaxes(visible=False, fixedrange=True, row=1, col=1)
     fig.update_yaxes(visible=False, fixedrange=True, row=1, col=1)
-    fig.update_xaxes(showticklabels=False, fixedrange=True, row=1, col=2)
-    fig.update_yaxes(title_text="# Shared alleles", range=[0, bar_y_max], fixedrange=True, row=1, col=2)
+    fig.update_xaxes(
+        showticklabels=False,
+        range=pattern_x_range,
+        fixedrange=True,
+        row=1,
+        col=2,
+    )
+    fig.update_yaxes(title_text="# Intersection alleles", range=[0, bar_y_max], fixedrange=True, row=1, col=2)
     fig.update_xaxes(
         title_text="# Alleles (Total)",
         range=[group_x_max, 0],
@@ -760,6 +1063,7 @@ def _build_sharing_figure(sharing_data):
         tickmode="array",
         tickvals=pattern_x,
         ticktext=["" for _ in pattern_x],
+        range=pattern_x_range,
         fixedrange=True,
         row=2,
         col=2,
@@ -782,39 +1086,58 @@ def _build_sharing_figure(sharing_data):
     return fig
 
 
+def _empty_accumulation_figure(title="Load the accumulation curve when needed"):
+    fig = go.Figure()
+    fig.update_layout(
+        title=title,
+        template="plotly_white",
+        height=500,
+        xaxis=dict(visible=False, fixedrange=True),
+        yaxis=dict(visible=False, fixedrange=True),
+        margin=dict(t=55, l=20, r=15, b=55),
+    )
+    return fig
+
+
 @app.callback(
     Output('overview-accumulation-chart', 'figure'),
-    Input('selected-species-store', 'data')
+    Input('selected-species-store', 'data'),
+    Input('overview-load-accumulation-btn', 'n_clicks'),
 )
-def update_accumulation_curve(species_id):
+def update_accumulation_curve(species_id, n_clicks):
     """Cumulative unique microhaplotype discovery curve."""
-    empty = go.Figure().update_layout(template="plotly_white")
+    triggered_id = ctx.triggered_id
 
     if not species_id:
-        empty.update_layout(title="Please select a species")
-        return empty
+        return _empty_accumulation_figure("Please select a species")
+
+    if triggered_id != "overview-load-accumulation-btn":
+        return _empty_accumulation_figure("Click Load Curve to generate this plot")
 
     try:
         db = DatabaseManager()
         with db.shared_connection():
-            rows = get_microhaplotype_accumulation_data(db, species_id)
+            rows = get_microhaplotype_accumulation_data(
+                db,
+                species_id,
+                max_result_points=ACCUMULATION_MAX_PLOT_POINTS,
+            )
 
         if not rows:
-            empty.update_layout(title="No sample-microhaplotype data available")
-            return empty
+            return _empty_accumulation_figure("No sample-microhaplotype data available")
 
         return _build_accumulation_figure(rows)
 
     except Exception as e:
-        empty.update_layout(title=f"Error: {str(e)}")
-        return empty
+        return _empty_accumulation_figure(f"Error: {str(e)}")
 
 
 @app.callback(
     Output('overview-sharing-chart', 'figure'),
-    Input('selected-species-store', 'data')
+    Input('selected-species-store', 'data'),
+    Input('overview-sharing-program-groups', 'value'),
 )
-def update_sharing_chart(species_id):
+def update_sharing_chart(species_id, selected_group_ids):
     """Owner-group microhaplotype sharing distribution."""
     empty = go.Figure().update_layout(template="plotly_white")
 
@@ -825,10 +1148,41 @@ def update_sharing_chart(species_id):
     try:
         db = DatabaseManager()
         with db.shared_connection():
-            sharing_data = get_microhaplotype_project_sharing_data(db, species_id)
+            sharing_data = get_microhaplotype_project_sharing_data(
+                db,
+                species_id,
+                max_intersections=0,
+                selected_group_ids=selected_group_ids,
+            )
 
         return _build_sharing_figure(sharing_data)
 
     except Exception as e:
         empty.update_layout(title=f"Error: {str(e)}")
         return empty
+
+
+@app.callback(
+    Output('overview-sharing-program-groups', 'options'),
+    Output('overview-sharing-program-groups', 'value'),
+    Input('selected-species-store', 'data')
+)
+def update_sharing_group_options(species_id):
+    """Populate selectable program groups for the sharing UpSet plot."""
+    if not species_id:
+        return [], []
+
+    try:
+        db = DatabaseManager()
+        with db.shared_connection():
+            sharing_data = get_microhaplotype_project_sharing_data(db, species_id)
+
+        groups = sharing_data.get("available_owner_groups") or sharing_data.get("owner_groups") or []
+        options = [
+            {"label": group["label"], "value": group["group_id"]}
+            for group in groups
+        ]
+        return options, sharing_data.get("default_group_ids") or [opt["value"] for opt in options[:3]]
+
+    except Exception:
+        return [], []
