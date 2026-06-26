@@ -82,6 +82,42 @@
   --Dash-Fill-Interactive-Strong: #319B42;
 }
 
+#haplotype-frequency-range .dash-range-slider-input,
+#haplotype-frequency-range.dash-slider-container > .dash-range-slider-input,
+.haplo-frequency-range-slider .dash-range-slider-input,
+.haplo-frequency-range-slider.dash-slider-container > .dash-range-slider-input {
+  display: none !important;
+}
+
+#haplotype-frequency-range .dash-slider-tooltip,
+.haplo-frequency-range-slider .dash-slider-tooltip {
+  display: none !important;
+}
+
+#haplotype-frequency-range .rc-slider-tooltip,
+#haplotype-frequency-range .rc-slider-tooltip-placement-bottom,
+#haplotype-frequency-range .rc-slider-tooltip-placement-top,
+.haplo-frequency-range-slider .rc-slider-tooltip,
+.haplo-frequency-range-slider .rc-slider-tooltip-placement-bottom,
+.haplo-frequency-range-slider .rc-slider-tooltip-placement-top,
+#haplotype-frequency-range [class*="tooltip"],
+.haplo-frequency-range-slider [class*="tooltip"] {
+  display: none !important;
+}
+
+#haplotype-frequency-range .rc-slider-mark-text,
+.haplo-frequency-range-slider .rc-slider-mark-text,
+#haplotype-frequency-range [class*="mark"],
+.haplo-frequency-range-slider [class*="mark"] {
+  font-size: 0.68rem !important;
+  white-space: nowrap !important;
+}
+
+#haplotype-frequency-range .rc-slider,
+.haplo-frequency-range-slider .rc-slider {
+  margin-bottom: 0.5rem !important;
+}
+
 /* Unified action button style for haplotype controls */
 .haplo-action-btn {
   color: var(--app-primary-5, #245842) !important;
@@ -108,4 +144,12 @@
 
 .haplo-action-btn:focus-visible {
   box-shadow: 0 0 0 0.2rem rgba(36, 88, 66, 0.25) !important;
+}
+
+.haplotype-results-loading-region {
+  min-height: 8rem;
+}
+
+.msa-results-loading-region {
+  min-height: 18rem;
 }

@@ -58,6 +58,7 @@ data/samples/*
 !data/samples/.gitkeep
 data/presence_absence/*
 !data/presence_absence/.gitkeep
+data/presence_artifacts/
 
 # Docker/build artifacts
 .docker/

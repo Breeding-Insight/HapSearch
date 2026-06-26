@@ -326,18 +326,25 @@ def show_marker_details(n_clicks, navigate_data, current_marker_id):
     empty_fig.update_layout(template='plotly_white', xaxis={'visible': False}, yaxis={'visible': False})
     placeholder_view = html.Div([
         html.Div("Select a locus result to view details", className="text-muted"),
-        html.Div(id='alignment-status-message', style={'display': 'none'}),
         dbc.Button(
             [html.I(className="fas fa-undo me-2"), "Show Original (Unaligned)"],
             id='show-original-btn',
             className="haplo-action-btn",
             style={'display': 'none'}
         ),
-        dcc.Graph(
-            id='msa-graph',
-            figure=empty_fig,
-            config={'displayModeBar': False},
-            style={'display': 'none'}
+        dcc.Loading(
+            html.Div([
+                html.Div(id='alignment-status-message', style={'display': 'none'}),
+                dcc.Graph(
+                    id='msa-graph',
+                    figure=empty_fig,
+                    config={'displayModeBar': False},
+                    style={'display': 'none'}
+                )
+            ], className="msa-results-loading-region"),
+            id='marker-msa-results-loading',
+            type='circle',
+            color='#319B42',
         )
         ])
     return placeholder_view, None, no_update
@@ -412,14 +419,17 @@ def create_marker_detail_view(marker_id):
                 )
             ]),
             dcc.Loading(
-                id='loading-alignment',
-                children=html.Div(id='alignment-status-message', children=html.Div()),
-                type='default'
-            ),
-            dcc.Graph(
-                id='msa-graph',
-                figure=loading_fig,
-                config={'displayModeBar': True, 'displaylogo': False}
+                html.Div([
+                    html.Div(id='alignment-status-message', children=html.Div()),
+                    dcc.Graph(
+                        id='msa-graph',
+                        figure=loading_fig,
+                        config={'displayModeBar': True, 'displaylogo': False}
+                    )
+                ], className="msa-results-loading-region"),
+                id='marker-msa-results-loading',
+                type='circle',
+                color='#319B42',
             ),
 
             html.Div([

@@ -71,6 +71,15 @@ FASTA_DIR = os.path.join(DATA_DIR, 'fasta')
 MARKERS_DIR = os.path.join(DATA_DIR, 'markers')
 SAMPLES_DIR = os.path.join(DATA_DIR, 'samples')
 PROJECTS_DIR = os.path.join(DATA_DIR, 'projects')
+DEFAULT_PRESENCE_ARTIFACT_DIR = (
+    '/srv/hapsearch/production/presence_artifacts'
+    if APP_ENV == 'production'
+    else '/srv/hapsearch/development/presence_artifacts'
+)
+PRESENCE_ARTIFACT_DIR = os.getenv(
+    'PRESENCE_ARTIFACT_DIR',
+    DEFAULT_PRESENCE_ARTIFACT_DIR
+)
 
 # Dropbox configuration (for metadata sync)
 DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '')

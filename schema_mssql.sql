@@ -90,22 +90,6 @@ CREATE TABLE microhaplotype_samples (
     CONSTRAINT FK_microhaplotype_samples_samples FOREIGN KEY (sample_id) REFERENCES samples(id)
 );
 
-CREATE TABLE allele_sample_presence (
-    microhaplotype_id INT NOT NULL,
-    sample_id INT NOT NULL,
-    PRIMARY KEY (microhaplotype_id, sample_id),
-    CONSTRAINT FK_allele_sample_presence_microhaplotypes FOREIGN KEY (microhaplotype_id) REFERENCES microhaplotypes(id),
-    CONSTRAINT FK_allele_sample_presence_samples FOREIGN KEY (sample_id) REFERENCES samples(id)
-);
-
-CREATE TABLE allele_project_presence (
-    microhaplotype_id INT NOT NULL,
-    project_id INT NOT NULL,
-    PRIMARY KEY (microhaplotype_id, project_id),
-    CONSTRAINT FK_allele_project_presence_microhaplotypes FOREIGN KEY (microhaplotype_id) REFERENCES microhaplotypes(id),
-    CONSTRAINT FK_allele_project_presence_projects FOREIGN KEY (project_id) REFERENCES projects(id)
-);
-
 CREATE TABLE contacts (
     id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
     full_name NVARCHAR(255) NOT NULL UNIQUE,
@@ -122,6 +106,38 @@ CREATE TABLE project_contacts (
     PRIMARY KEY (project_id, contact_id),
     CONSTRAINT FK_project_contacts_projects FOREIGN KEY (project_id) REFERENCES projects(id),
     CONSTRAINT FK_project_contacts_contacts FOREIGN KEY (contact_id) REFERENCES contacts(id)
+);
+
+CREATE TABLE presence_artifacts (
+    id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
+    entity_type NVARCHAR(20) NOT NULL,
+    species_id INT NULL,
+    project_id INT NULL,
+    source_path NVARCHAR(1024) NOT NULL,
+    source_sha256 NVARCHAR(64),
+    artifact_path NVARCHAR(1024) NOT NULL,
+    metadata_path NVARCHAR(1024),
+    compression NVARCHAR(50) NOT NULL,
+    schema_version INT NOT NULL,
+    microhaplotype_count INT NOT NULL,
+    entity_count INT NOT NULL,
+    presence_count BIGINT NOT NULL,
+    artifact_size_bytes BIGINT NULL,
+    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+);
+
+CREATE TABLE microhaplotype_presence_summary (
+    microhaplotype_id INT NOT NULL,
+    species_id INT NOT NULL,
+    entity_type NVARCHAR(20) NOT NULL,
+    present_count INT NOT NULL,
+    total_count INT NOT NULL,
+    frequency FLOAT NOT NULL,
+    artifact_id INT NULL,
+    updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    PRIMARY KEY (microhaplotype_id, species_id, entity_type),
+    CONSTRAINT FK_presence_summary_microhaplotypes FOREIGN KEY (microhaplotype_id) REFERENCES microhaplotypes(id),
+    CONSTRAINT FK_presence_summary_artifacts FOREIGN KEY (artifact_id) REFERENCES presence_artifacts(id)
 );
 
 CREATE TABLE users (
@@ -148,9 +164,9 @@ CREATE INDEX idx_samples_project ON samples(project_id);
 CREATE INDEX idx_samples_species ON samples(species_id);
 CREATE INDEX idx_microhap_samples_hap ON microhaplotype_samples(microhaplotype_id);
 CREATE INDEX idx_microhap_samples_sample ON microhaplotype_samples(sample_id);
-CREATE INDEX idx_allele_presence_sample ON allele_sample_presence(sample_id);
-CREATE INDEX idx_allele_project_presence_project ON allele_project_presence(project_id);
 CREATE INDEX idx_contacts_full_name ON contacts(full_name);
 CREATE INDEX idx_project_contacts_project ON project_contacts(project_id);
 CREATE INDEX idx_project_contacts_contact ON project_contacts(contact_id);
+CREATE INDEX idx_presence_artifacts_entity ON presence_artifacts(entity_type, species_id, project_id);
+CREATE INDEX idx_presence_summary_species_entity ON microhaplotype_presence_summary(species_id, entity_type);
 CREATE INDEX idx_users_orcid ON users(orcid_id);
