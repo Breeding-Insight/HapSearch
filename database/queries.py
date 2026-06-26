@@ -1034,8 +1034,7 @@ def get_presence_statistics(
     if summary_rows:
         summary = summary_rows[0]
         total = int(summary.get('total_count') or 0)
-        artifact_present = len(_get_entity_ids_for_haplotype_artifacts(db, haplotype_name, "sample"))
-        present = max(int(summary.get('present_count') or 0), artifact_present)
+        present = int(summary.get('present_count') or 0)
         return {
             'total_samples': total,
             'present_samples': present,
