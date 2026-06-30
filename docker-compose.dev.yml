@@ -17,6 +17,8 @@ services:
       - ./database:/app/database
       - ./design:/app/design
       - ./data:/app/data
+      - /srv/hapsearch/development/botloci:/app/data/botloci
+      - /srv/hapsearch/development/fasta:/app/data/fasta
       - ./scripts:/app/scripts
       - ./assets:/app/assets
       - ./static:/app/static
