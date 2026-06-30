@@ -71,11 +71,12 @@ FASTA_DIR = os.path.join(DATA_DIR, 'fasta')
 MARKERS_DIR = os.path.join(DATA_DIR, 'markers')
 SAMPLES_DIR = os.path.join(DATA_DIR, 'samples')
 PROJECTS_DIR = os.path.join(DATA_DIR, 'projects')
-DEFAULT_PRESENCE_ARTIFACT_DIR = (
-    '/srv/hapsearch/production/presence_artifacts'
-    if APP_ENV == 'production'
-    else '/srv/hapsearch/development/presence_artifacts'
-)
+if APP_ENV == 'production':
+    DEFAULT_PRESENCE_ARTIFACT_DIR = '/srv/hapsearch/production/presence_artifacts'
+elif APP_ENV == 'local-dev':
+    DEFAULT_PRESENCE_ARTIFACT_DIR = os.path.join(DATA_DIR, 'presence_artifacts')
+else:
+    DEFAULT_PRESENCE_ARTIFACT_DIR = '/srv/hapsearch/development/presence_artifacts'
 PRESENCE_ARTIFACT_DIR = os.getenv(
     'PRESENCE_ARTIFACT_DIR',
     DEFAULT_PRESENCE_ARTIFACT_DIR

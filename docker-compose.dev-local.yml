@@ -36,7 +36,6 @@ services:
       - ./auth:/app/auth
       - ./templates:/app/templates
       - ./alignment:/app/alignment
-      - ./data/presence_artifacts:/srv/hapsearch/development/presence_artifacts
     env_file:
       - .env.development.local
     environment:
@@ -46,7 +45,7 @@ services:
       - MSSQL_SERVER=mssql
       - MSSQL_PORT=1433
       - MSSQL_DRIVER=ODBC Driver 18 for SQL Server
-      - PRESENCE_ARTIFACT_DIR=/srv/hapsearch/development/presence_artifacts
+      - PRESENCE_ARTIFACT_DIR=/app/data/presence_artifacts
       - BYPASS_ORCID_AUTH=true
       - BYPASS_AUTH_WHITELIST=false
     restart: unless-stopped
