@@ -24,6 +24,7 @@ services:
       - ./auth:/app/auth
       - ./templates:/app/templates
       - ./alignment:/app/alignment
+      - /srv/hapsearch/development/presence_absence:/app/data/presence_absence
       - /srv/hapsearch/development/presence_artifacts:/srv/hapsearch/development/presence_artifacts
       - /etc/ssl/certs/ifs-brin-01.pem:/cert.pem:ro
       - /etc/ssl/private/ifs-brin-01.key:/key.pem:ro
