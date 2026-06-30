@@ -32,14 +32,16 @@ class FakeSpeciesSnapshotDb:
 
 
 class SpeciesSnapshotTests(unittest.TestCase):
-    def test_rare_microhaplotypes_count_only_singletons(self):
+    def test_rare_microhaplotypes_count_low_frequency_with_sample_data(self):
         db = FakeSpeciesSnapshotDb()
 
         snapshot = get_species_snapshot(db, 1)
 
         self.assertEqual(snapshot["rare_microhaplotypes"], 3)
         self.assertNotIn("rare_alleles", snapshot)
-        self.assertIn("m.sample_count = 1", db.rare_query)
+        self.assertIn("m.frequency <= 0.01", db.rare_query)
+        self.assertIn("COALESCE(m.sample_count, 0) > 0", db.rare_query)
+        self.assertNotIn("m.sample_count = 1", db.rare_query)
         self.assertNotIn("m.sample_count <= 1", db.rare_query)
 
 

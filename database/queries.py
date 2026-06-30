@@ -867,7 +867,9 @@ def get_species_snapshot(db: DatabaseManager, species_id: int) -> Dict[str, Any]
         FROM microhaplotypes m
         JOIN markers mk ON m.marker_id = mk.id
         JOIN chromosomes c ON mk.chromosome_id = c.id
-        WHERE c.species_id = ? AND m.sample_count = 1
+        WHERE c.species_id = ?
+          AND m.frequency <= 0.01
+          AND COALESCE(m.sample_count, 0) > 0
     """
     rare_rows = db.execute_query(rare_query, (species_id,))
     rare_microhaplotypes = (rare_rows[0]['rare_count'] if rare_rows else 0) or 0

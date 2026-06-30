@@ -439,7 +439,7 @@ SNAPSHOT_TILES = [
     {'key': 'sample_count',           'label': 'Samples',               'icon': 'fas fa-vial'},
     {'key': 'project_count',          'label': 'Contributing Projects', 'icon': 'fas fa-folder-open'},
     {'key': 'rare_microhaplotypes',   'label': 'Rare microhapotypes',   'icon': 'fas fa-gem',
-     'tooltip': 'Microhapotypes observed in only one sample across all projects'},
+     'tooltip': 'Microhapotypes with sample frequency <= 1%, excluding missing sample data'},
 ]
 
 
