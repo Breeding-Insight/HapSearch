@@ -1,232 +1,91 @@
-# HaploSearch
+# HapSearch
 
-HaploSearch is a web-based microhaplotype analysis platform for searching, visualizing, and sharing haplotype data across breeding projects and species.
+![HapSearch logo](static/HaploSearch_logo_main_2.png)
 
-The app provides:
+**Find useful microhaplotypes, understand where they occur, and connect them to the breeding programs and people who can put them to work.**
 
-- Overview dashboards for species, marker, haplotype, sample, project, and PI coverage.
-- Marker exploration with multiple sequence alignment and variant annotation views.
-- Haplotype exploration with sample, project, and collaborator context.
-- Import utilities for FASTA, sample metadata, project presence, sample presence, and variant annotations.
-- Docker-based deployment for local development and production-style environments.
+HapSearch is a web-based exploration platform for microhaplotype data in specialty crop breeding. It brings marker sequences, variants, samples, projects, and collaborator information into one searchable interface so breeders and researchers can move from a locus of interest to evidence they can act on.
 
-## Requirements
+Microhaplotypes are short genomic regions containing multiple nearby variants that are observed together. Because they can represent more allelic diversity than a single SNP while retaining local phase information, they are useful for characterizing germplasm, tracking trait-associated variation, and designing crosses.
 
-- Docker Desktop for the containerized workflow.
-- Python 3.13+ for local development outside Docker.
-- Microsoft SQL Server and ODBC Driver 18 for SQL Server for the default database configuration.
-- Optional alignment tools such as MUSCLE or Clustal Omega when running outside Docker.
+## Why HapSearch?
 
-## Quick Start With Docker
+Microhaplotype data is often distributed across spreadsheets, local databases, and analysis scripts. That fragmentation makes practical questions surprisingly difficult to answer:
 
-### Local Development With Bundled SQL Server
+- Which haplotypes are present in elite parents or breeding populations?
+- Does a marker distinguish the alleles surrounding a target SNP?
+- Which samples carry a rare or useful microhaplotype?
+- Which projects and collaborators hold relevant germplasm?
+- Where are the gaps in microhaplotype coverage for a crop?
 
-Use this path when you want Docker Compose to start both HaploSearch and a local SQL Server container. This stack sets `APP_ENV=local-dev` and bypasses ORCID sign-in for local-only work.
+HapSearch connects those questions in a single workflow. Users can begin with a species-level view, inspect the sequence evidence behind a marker, find the samples and projects associated with a microhaplotype, and identify potential collaborators for validation or germplasm exchange.
 
-1. Create a local environment file:
+## What you can do
 
-   ```bash
-   cp .env.example .env.development.local
-   ```
+### Understand coverage across a species
 
-   Update the copied file with local SQL Server credentials. For the bundled SQL Server container, include `ACCEPT_EULA=Y` and set both `SA_PASSWORD` and `MSSQL_PASSWORD` to the same strong password.
+The overview dashboard summarizes markers, microhaplotypes, samples, projects, and chromosome-level coverage. Density, accumulation, and project-sharing views help users see what is represented in the database and where more data may be valuable.
 
-2. Start the local development stack:
+### Explore microhaplotypes
 
-   ```bash
-   docker compose -f docker-compose.dev-local.yml up -d --build
-   ```
+Search by marker, microhaplotype name, sequence, chromosome, sample, or project context. For each result, examine its sequence, prevalence, associated samples, breeding projects, and collaborator information.
 
-3. Open the app:
+### Inspect marker-level variation
 
-   ```text
-   http://localhost:5000
-   ```
+Compare sequences in a multiple sequence alignment, view SNP and indel annotations in genomic context, and move directly between a marker and its observed microhaplotypes. HapSearch can also detect variants when annotations are not already available.
 
-4. Stop the stack:
+### Connect data to breeding work
 
-   ```bash
-   docker compose -f docker-compose.dev-local.yml down
-   ```
+HapSearch preserves the relationship between sequence variation and the projects that generated or contain it. This makes it easier to evaluate markers, locate useful germplasm, coordinate validation, and discover opportunities for cross-program collaboration.
 
-### Development Against an Existing SQL Server
+## Who it is for
 
-Use this path when SQL Server already exists outside the Compose stack. This stack requires ORCID authentication.
+- **Breeders** evaluating markers, identifying useful alleles, and selecting material for crossing or advancement.
+- **Quantitative geneticists and researchers** investigating locus-level variation and haplotype distributions.
+- **Data curators and bioinformaticians** consolidating datasets and visually checking alignments, variants, and metadata.
+- **Project leads and collaborators** discovering related material, expertise, and opportunities to coordinate research.
 
-```bash
-docker compose -f docker-compose.dev.yml up -d --build
-```
+## A typical workflow
 
-The app is available at:
+1. Select a crop species and review its data coverage.
+2. Find a marker or genomic region connected to a trait of interest.
+3. Inspect its aligned sequences and variant annotations.
+4. Open a microhaplotype to see where it occurs.
+5. Review associated samples, projects, and contacts to plan the next breeding or research step.
 
-```text
-http://localhost:5000
-```
+## Current capabilities
 
-### Production-Style Compose
+- Multi-species overview and database summaries
+- Chromosome-level microhaplotype counts and density views
+- Microhaplotype accumulation and cross-project sharing analyses
+- Searchable microhaplotype and marker explorers
+- Multiple sequence alignment and variant visualization
+- Sample, project, institution, location, and collaborator context
+- ORCID authentication with role-based administration
+- Import workflows for FASTA, sample metadata, presence/absence data, projects, and variants
+- Image export for overview visualizations
+- Microsoft SQL Server-backed data storage
+- Docker-based development and deployment options
 
-The default `docker-compose.yml` maps host port `5080` to container port `5000` and expects production environment variables in `.env.production`.
+## Project at a glance
 
-```bash
-docker compose up -d --build
-```
-
-The app is available at:
+HapSearch is a Python web application built with Flask, Dash, Plotly, BioPython, and Microsoft SQL Server. The repository contains the application, database schema and queries, data-import tools, alignment utilities, and automated tests.
 
 ```text
-https://localhost:5080
-```
-
-TLS is enabled in the production compose file and expects certificate/key mounts at the paths shown in `docker-compose.yml`. Production requires ORCID authentication.
-
-## Local Python Development
-
-1. Create and activate a virtual environment:
-
-   ```bash
-   python3.13 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-2. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Configure environment variables in `.env`.
-
-4. Initialize the database:
-
-   ```bash
-   python scripts/init_database.py --force
-   ```
-
-5. Start the app:
-
-   ```bash
-   python app.py
-   ```
-
-The app defaults to `http://localhost:5000` in development.
-
-## Environment Variables
-
-Common settings:
-
-```bash
-APP_ENV=development
-APP_PORT=5000
-DEBUG_MODE=true
-SECRET_KEY=change-me
-MSSQL_SERVER=localhost
-MSSQL_PORT=1433
-MSSQL_DATABASE=HaploSearch
-MSSQL_USER=sa
-MSSQL_PASSWORD=your-password
-MSSQL_DRIVER="ODBC Driver 18 for SQL Server"
-MSSQL_TRUST_SERVER_CERTIFICATE=true
-```
-
-Optional ORCID OAuth settings:
-
-```bash
-ORCID_CLIENT_ID=your-client-id
-ORCID_CLIENT_SECRET=your-client-secret
-```
-
-Authentication bypass settings:
-
-```bash
-BYPASS_ORCID_AUTH=false
-BYPASS_AUTH_WHITELIST=false
-BYPASS_DEV_ORCID=0000-0000-0000-0000
-BYPASS_DEV_NAME="Developer"
-BYPASS_DEV_ROLE=admin
-```
-
-`BYPASS_ORCID_AUTH=true` only works when `APP_ENV=local-dev`, which is set by `docker-compose.dev-local.yml`. The regular development and production Compose files explicitly keep ORCID authentication required.
-
-## Data Import
-
-Initialize or reset the database schema:
-
-```bash
-python scripts/init_database.py --force
-```
-
-Import data with the scripts in `scripts/`:
-
-- `import_fasta.py`: import FASTA sequence files and extract haplotypes.
-- `import_samples.py`: import sample metadata and project associations.
-- `import_project_presence.py`: import project-level presence/absence data.
-- `import_sample_presence.py`: import sample-level presence/absence data.
-- `import_variants.py`: import variant annotations.
-- `import_botloci.py`: import `.botloci` bottom-strand locus lookup files.
-- `detect_variants.py`: detect variants from sequence data.
-
-See each script's help output for supported arguments:
-
-```bash
-python scripts/import_fasta.py --help
-```
-
-## Testing
-
-Run the test suite with:
-
-```bash
-pytest
-```
-
-If `pytest` is not installed, install the development dependency first:
-
-```bash
-pip install pytest
-```
-
-## Project Structure
-
-```text
-alignment/   Sequence alignment and variant annotation helpers
-assets/      Dash CSS assets
-auth/        ORCID and session authentication helpers
-data/        Local/imported data files
-database/    Database manager, queries, and bulk import helpers
-design/      Color tokens and visualization palette documentation
-pages/       Dash page modules
-scripts/     Database initialization and import utilities
-static/      Images and static assets
-templates/   Flask templates
+alignment/   Sequence alignment and variant annotation
+auth/        ORCID authentication and sessions
+database/    Data access and presence/absence artifacts
+pages/       Dash views and exploration workflows
+scripts/     Database initialization and data imports
 tests/       Automated tests
 ```
 
-## Troubleshooting
+## Setup and development
 
-### Port Already In Use
+The supported containerized environment uses Docker Compose with Microsoft SQL Server. Direct local development requires Python 3.13+ and ODBC Driver 18 for SQL Server. See the [SQL Server setup notes](MSSQL_SETUP.md) and [.env example](.env.example) for configuration details.
 
-Change the host-side port mapping in the relevant Compose file. For example, change `5000:5000` to `5001:5000`, then open `http://localhost:5001`.
+## Project documentation
 
-### Docker Is Not Running
-
-Launch Docker Desktop and wait for it to finish starting before running Docker Compose commands.
-
-### SQL Server Connection Fails
-
-- Confirm SQL Server is running and reachable from the app container.
-- Confirm `MSSQL_SERVER`, `MSSQL_PORT`, `MSSQL_DATABASE`, `MSSQL_USER`, and `MSSQL_PASSWORD`.
-- Use `MSSQL_TRUST_SERVER_CERTIFICATE=true` for local/internal SQL Server instances with self-signed certificates.
-- Confirm the configured ODBC driver name matches the installed driver.
-
-### Rebuild Containers
-
-```bash
-docker compose -f docker-compose.dev-local.yml down
-docker compose -f docker-compose.dev-local.yml up -d --build
-```
-
-## Additional Documentation
-
-- [Microsoft SQL Server setup guide](MSSQL_SETUP.md)
-- [Product plan](HaploSearch_Plan_Document.md)
-- [Color palette design](design/color_palettes.md)
+- [Product plan and roadmap](HaploSearch_Plan_Document.md)
+- [Microsoft SQL Server setup notes](MSSQL_SETUP.md)
+- [Visualization color system](design/color_palettes.md)
