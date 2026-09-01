@@ -43,6 +43,7 @@ COPY schema_mssql.sql ./
 COPY app.py .
 COPY config.py .
 COPY dash_app.py .
+COPY gunicorn.conf.py .
 COPY assets/ ./assets/
 COPY static/ ./static/
 COPY pages/ ./pages/
@@ -59,9 +60,11 @@ RUN groupadd --gid 10001 app && \
 # Expose single internal app port; external ports are mapped via docker-compose
 EXPOSE 5000
 
-# Run the app
+# Run the app with a production-grade WSGI server. Gunicorn keeps a master
+# process alive to replace failed workers and does not run Flask's debug
+# reloader, so application workers cannot silently reload inside the container.
 USER app
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "app:server"]
 
 # Dev-only stage: add Microsoft ODBC Driver for SQL Server (local dev container)
 FROM base AS dev
