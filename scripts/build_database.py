@@ -134,6 +134,24 @@ def _local_path(data_repo: str, base_dir: str, spec: str) -> str:
     return os.path.normpath(os.path.join(base_dir, spec))
 
 
+def _missing_hint(path: str, data_repo: str) -> str:
+    """Explain a missing path: a case-only mismatch, or what the folder holds."""
+    parent, name = os.path.split(path)
+    while parent and not os.path.isdir(parent) and parent != data_repo:
+        parent, name = os.path.split(parent)
+    if not os.path.isdir(parent):
+        return ""
+    entries = sorted(os.listdir(parent))
+    case_matches = [entry for entry in entries if entry.lower() == name.lower()]
+    where = os.path.relpath(parent, data_repo)
+    where = "the repository root" if where == "." else f"{where}/"
+    if case_matches:
+        return (f". Did you mean '{case_matches[0]}'? Names are case-sensitive "
+                f"in Cloud Build")
+    shown = ", ".join(entries[:15]) + (", ..." if len(entries) > 15 else "")
+    return f". {where} contains: {shown or 'nothing'}"
+
+
 def _has_wildcard(spec: str) -> bool:
     return any(char in spec for char in "*?[")
 
@@ -198,7 +216,8 @@ def _resolve_source(spec, data_repo: str, base_dir: str, cache_dir: str,
         if _has_wildcard(spec):
             matches = _glob_files(path)
             if not matches:
-                raise BuildError(f"{label}: {spec} matches no files in the data repository")
+                raise BuildError(f"{label}: {spec} matches no files in the data repository"
+                                 f"{_missing_hint(os.path.dirname(path), data_repo)}")
             if len(matches) > 1 and not pick_newest:
                 names = ", ".join(os.path.relpath(match, data_repo) for match in matches)
                 raise BuildError(
@@ -207,7 +226,8 @@ def _resolve_source(spec, data_repo: str, base_dir: str, cache_dir: str,
                 )
             path = max(matches, key=_version_key)
         elif not os.path.isfile(path):
-            raise BuildError(f"{label}: {spec} does not exist in the data repository")
+            raise BuildError(f"{label}: {spec} does not exist in the data repository"
+                             f"{_missing_hint(path, data_repo)}")
         plan_sources[label] = os.path.relpath(path, data_repo)
         return path
     if isinstance(spec, dict) and {"repo", "ref", "path"} <= set(spec):
@@ -251,7 +271,8 @@ def _expand_presence(spec, data_repo: str, base_dir: str, label: str, fasta: str
         elif os.path.isfile(path):
             files.append(path)
         else:
-            raise BuildError(f"{label}: {item} does not exist in the data repository{hint}")
+            raise BuildError(f"{label}: {item} does not exist in the data repository{hint}"
+                             f"{_missing_hint(path, data_repo)}")
     if len(files) <= 3:
         plan_sources[label] = ", ".join(os.path.relpath(path, data_repo) for path in files)
     else:

@@ -2,7 +2,13 @@ import os
 import tempfile
 import unittest
 
-from scripts.build_database import BuildError, fasta_stem, find_manifest, load_plan
+from scripts.build_database import (
+    BuildError,
+    _missing_hint,
+    fasta_stem,
+    find_manifest,
+    load_plan,
+)
 
 MANIFEST = """
 [metadata]
@@ -81,6 +87,31 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(
             find_manifest(self.repo, None), os.path.join(root_hapsearch, "manifest.toml")
         )
+
+    def test_case_only_mismatch_is_pointed_out(self):
+        with open(self.manifest, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(self.manifest, "w", encoding="utf-8") as handle:
+            handle.write(text.replace('"Sample_hapStatus"', '"sample_hapStatus"'))
+
+        if os.path.isdir(os.path.join(self.hapsearch, "sample_hapStatus")):
+            self.skipTest("case-insensitive filesystem")
+        with self.assertRaisesRegex(BuildError, "Did you mean 'Sample_hapStatus'"):
+            load_plan(self.repo, os.path.join(self.repo, ".cache"))
+
+    def test_missing_folder_lists_what_exists(self):
+        with open(self.manifest, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(self.manifest, "w", encoding="utf-8") as handle:
+            handle.write(text.replace('"Sample_hapStatus"', '"Samples"'))
+
+        with self.assertRaisesRegex(BuildError, "contains: .*Sample_hapStatus.*hapPA"):
+            load_plan(self.repo, os.path.join(self.repo, ".cache"))
+
+    def test_hint_flags_case_only_differences(self):
+        hint = _missing_hint(os.path.join(self.hapsearch, "sample_hapstatus"), self.repo)
+
+        self.assertIn("Did you mean 'Sample_hapStatus'", hint)
 
     def test_missing_repo_is_explained(self):
         with self.assertRaisesRegex(BuildError, "Data repository not found"):
@@ -187,6 +218,8 @@ class VersionPinTests(PatternManifestTests):
         return load_plan(self.repo, os.path.join(self.repo, ".cache"), version=version)
 
     # Inherited pattern tests use a different manifest.
+    test_case_only_mismatch_is_pointed_out = None
+    test_missing_folder_lists_what_exists = None
     test_newest_fasta_and_its_matrix_are_chosen = None
     test_newest_fasta_without_matrix_stops_the_build = None
     test_pinned_fasta_selects_matching_matrix = None
