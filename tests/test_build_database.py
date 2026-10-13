@@ -4,7 +4,9 @@ import unittest
 
 from scripts.build_database import (
     BuildError,
+    BuildPlan,
     _missing_hint,
+    check_metadata,
     fasta_stem,
     find_manifest,
     load_plan,
@@ -112,6 +114,26 @@ class BuildPlanTests(unittest.TestCase):
         hint = _missing_hint(os.path.join(self.hapsearch, "sample_hapstatus"), self.repo)
 
         self.assertIn("Did you mean 'Sample_hapStatus'", hint)
+
+    def test_unquoted_comma_in_contacts_names_the_file_and_line(self):
+        mapping = os.path.join(self.hapsearch, "HapSearch_mapping.csv")
+        contacts = os.path.join(self.hapsearch, "HapSearch_owner_contacts.csv")
+        with open(mapping, "w", encoding="utf-8") as handle:
+            handle.write("genotyping_source,project_code,owner_name\nDAl21-6679,P01,Jane Doe\n")
+        with open(contacts, "w", encoding="utf-8") as handle:
+            handle.write("Full Name,Employer,Primary Location\n"
+                         'Jane Doe,USDA,"St. Paul, MN"\n'
+                         "John Roe,Cornell University,Ithaca, NY\n")
+        plan = BuildPlan(manifest_path=self.manifest, project_mapping=mapping,
+                         owner_contacts=contacts, species=[], max_skipped_allele_fraction=0.02)
+
+        with self.assertRaises(BuildError) as raised:
+            check_metadata(plan, self.repo)
+
+        message = str(raised.exception)
+        self.assertIn("owner contacts file alfalfa/data/hapSearch/HapSearch_owner_contacts.csv", message)
+        self.assertIn("line 3 has 4 fields but the header has 3", message)
+        self.assertNotIn("Cornell", message)  # no personal details in build logs
 
     def test_missing_repo_is_explained(self):
         with self.assertRaisesRegex(BuildError, "Data repository not found"):
