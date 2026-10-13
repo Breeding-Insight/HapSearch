@@ -93,7 +93,7 @@ def load_projects(search_term, pi_filter, species_id):
         db = DatabaseManager()
 
         # Build query
-        species_list_expr = "STRING_AGG(sp.common_name, ', ')"
+        species_list_expr = "GROUP_CONCAT(sp.common_name, ', ')"
         query = f"""
         SELECT
             p.id,
@@ -217,7 +217,7 @@ def create_project_card(project):
                     dbc.Col([
                         html.Div([
                             html.H5(project['sample_count'] or 0, className="mb-0 text-primary"),
-                            html.Small("Genotypes", className="text-muted")
+                            html.Small("Samples", className="text-muted")
                         ], className="text-center")
                     ], width=6),
                     dbc.Col([

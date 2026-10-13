@@ -179,7 +179,11 @@ class VariantDetector:
                     # Insert variants into database
                     for variant in variants:
                         cursor.execute("""
-                            IF NOT EXISTS (
+                            INSERT INTO variants
+                            (marker_id, position, variant_type, reference_allele,
+                             alternate_allele, frequency)
+                            SELECT ?, ?, ?, ?, ?, ?
+                            WHERE NOT EXISTS (
                                 SELECT 1 FROM variants
                                 WHERE marker_id = ?
                                   AND position = ?
@@ -187,24 +191,18 @@ class VariantDetector:
                                   AND reference_allele = ?
                                   AND alternate_allele = ?
                             )
-                            BEGIN
-                                INSERT INTO variants
-                                (marker_id, position, variant_type, reference_allele,
-                                 alternate_allele, frequency)
-                                VALUES (?, ?, ?, ?, ?, ?)
-                            END
                         """, (
                             marker_id,
                             variant['position'],
                             variant['variant_type'],
                             variant['reference_allele'],
                             variant['alternate_allele'],
+                            variant['frequency'],
                             marker_id,
                             variant['position'],
                             variant['variant_type'],
                             variant['reference_allele'],
-                            variant['alternate_allele'],
-                            variant['frequency']
+                            variant['alternate_allele']
                         ))
 
                         stats['total_variants'] += 1

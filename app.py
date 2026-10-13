@@ -9,8 +9,14 @@ import dash_bootstrap_components as dbc
 from flask import redirect, session, render_template, send_from_directory
 
 import config
+import logging
 import sys
 import os
+
+# stderr is collected by Cloud Logging on Cloud Run. Only auth events (such as
+# sign-ins) are logged at INFO; everything else stays at WARNING.
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+logging.getLogger('auth').setLevel(logging.INFO)
 
 # Add current directory to path for database/design imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -22,7 +28,18 @@ from auth.orcid import auth_bp
 server.register_blueprint(auth_bp)
 
 # Import session helpers
-from auth.session import is_authenticated, is_admin, get_current_user, start_local_dev_session
+from auth.session import is_authenticated, get_current_user, start_local_dev_session
+from auth.user_store import get_user_store
+
+if config.USER_STORE_PREFLIGHT:
+    try:
+        get_user_store().assert_ready()
+    except Exception as exc:
+        raise RuntimeError(
+            f"The {config.USER_STORE} user store is not reachable. On Cloud Run, check "
+            "FIRESTORE_DATABASE, GOOGLE_CLOUD_PROJECT and that the service account has "
+            f"roles/datastore.viewer. ({exc})"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -31,11 +48,29 @@ from auth.session import is_authenticated, is_admin, get_current_user, start_loc
 
 @server.route('/')
 def landing_page():
-    """Serve the public landing page."""
+    """Serve the public landing page.
+
+    On Cloud Run the public landing page lives on GitHub Pages, so signed-out
+    visitors are sent there when HAPSEARCH_LANDING_URL is set.
+    """
+    if config.LANDING_URL and not is_authenticated():
+        return redirect(config.LANDING_URL)
     user = get_current_user() if is_authenticated() else None
     return render_template('landing.html',
                            app_env=config.APP_ENV,
                            user=user)
+
+
+@server.route('/health')
+def health():
+    """Unauthenticated wake-up/health check that never touches the database."""
+    return 'ok', 200, {'Content-Type': 'text/plain', 'Cache-Control': 'no-store'}
+
+
+@server.route('/robots.txt')
+def robots_txt():
+    """Keep crawlers from waking the scale-to-zero service."""
+    return 'User-agent: *\nDisallow: /\n', 200, {'Content-Type': 'text/plain'}
 
 
 @server.route('/static/<path:filename>')
@@ -107,10 +142,9 @@ from pages import overview, marker_explorer, haplotype_explorer
 
 
 def serve_layout():
-    """Dynamically build the layout so admin tab is conditionally included."""
+    """Dynamically build the layout so the header shows the signed-in user."""
     user = get_current_user()
     user_display = user['user_name'] if user else ''
-    user_role = user['user_role'] if user else 'user'
 
     tabs = [
         dbc.Tab(
@@ -139,22 +173,11 @@ def serve_layout():
         ),
     ]
 
-    # Header right: user, admin settings icon (visible only for admins), logout
-    from pages import admin
+    # Header right: user, logout
     header_right_elts = [
         html.I(className="fas fa-user me-1"),
         user_display,
         " | ",
-        dbc.Button(
-            html.I(className="fas fa-cog"),
-            id="admin-open-btn",
-            color="link",
-            size="sm",
-            className="p-0 me-1",
-            title="User management",
-            style={"display": "inline-block" if user_role == 'admin' else "none", "color": "#000000"},
-        ),
-        " ",
         html.A("Logout", href="/auth/logout", className="text-muted")
     ]
 
@@ -225,6 +248,11 @@ def serve_layout():
                         alt="Breeding Insight Logo",
                         style={"height": "50px", "width": "auto", "maxWidth": "200px"}
                     ),
+                    html.Img(
+                        src="/static/cornell_seal_simple_web_b31b1b.png",
+                        alt="Cornell University Seal",
+                        style={"height": "50px", "width": "auto", "maxWidth": "80px"}
+                    ),
                 ], className="app-footer-logos"),
                 html.Div([
                     html.Small("Funded by USDA-ARS and housed at University of Florida (UF/IFAS)."),
@@ -233,12 +261,6 @@ def serve_layout():
                 ], className="app-footer-text"),
             ], className="container")
         ], className="app-footer"),
-        # Admin modal (always in DOM so callback works; only openable by admins via settings icon)
-        dbc.Modal([
-            dbc.ModalHeader(dbc.ModalTitle("User Management"), close_button=True),
-            dbc.ModalBody(admin.layout),
-            dbc.ModalFooter(dbc.Button("Close", id="admin-modal-close", color="secondary")),
-        ], id="admin-modal", is_open=False, size="xl", scrollable=True),
     ]
 
     return dbc.Container(layout_children, fluid=True, className="p-4")
@@ -304,7 +326,7 @@ def update_db_status(active_tab, app_initialized):
                 f"{stats['species_count']} Species | ",
                 f"{stats['marker_count']:,} Loci | ",
                 f"{stats['microhaplotype_count']:,} Microhaplotypes | ",
-                f"{stats['sample_count']:,} Genotypes"
+                f"{stats['sample_count']:,} Samples"
             ], className="text-muted")
         ])
     except Exception as e:
@@ -330,20 +352,6 @@ def mark_app_initialized_on_tab_change(active_tab, current_initialized):
     if active_tab == "overview-tab":
         return False
     return True
-
-
-@callback(
-    Output('admin-modal', 'is_open'),
-    Input('admin-open-btn', 'n_clicks'),
-    Input('admin-modal-close', 'n_clicks'),
-    State('admin-modal', 'is_open'),
-    prevent_initial_call=True,
-)
-def toggle_admin_modal(open_clicks, close_clicks, is_open):
-    """Open admin modal from settings icon, close from Close button."""
-    if ctx.triggered_id == 'admin-open-btn':
-        return True
-    return False
 
 
 @callback(

@@ -1,0 +1,21 @@
+# Only the built SQLite database is needed at runtime; raw import inputs and
+# legacy .npz artifacts stay out of the image.
+data/*
+!data/hapsearch.db
+
+.git
+.github
+.venv
+venv
+env
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.env
+.env.*
+*.pem
+*.key
+tests
+docs
+landing
+.build-cache

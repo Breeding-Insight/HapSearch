@@ -1,4 +1,8 @@
 :root {
+  --app-navy: #304c89;
+  --app-blue: #648de5;
+  --app-card-header-bg: #d8ead8;
+
   --app-primary-1: #245842;
   --app-primary-2: #245842;
   --app-primary-3: #245842;
@@ -197,11 +201,31 @@
 }
 
 /* Card title/header bars (e.g., Overview charts) */
-:root {
-  --app-card-header-bg: #d8ead8;
-}
-
 .card > .card-header,
 .card-header {
   background-color: var(--app-card-header-bg) !important;
+}
+
+/* Overview loading regions reserve callback space so cards do not jump. */
+.overview-loading-region {
+  width: 100%;
+}
+
+.overview-graph-loading-region {
+  min-height: 500px;
+}
+
+.overview-top-loading-region {
+  height: 300px;
+  min-height: 300px;
+  overflow: hidden;
+}
+
+.overview-snapshot-loading-region {
+  min-height: 12rem;
+  width: 100%;
+}
+
+.overview-density-loading-region {
+  min-height: 34rem;
 }

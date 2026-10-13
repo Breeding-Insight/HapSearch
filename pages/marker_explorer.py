@@ -19,9 +19,18 @@ from database.queries import (
     get_marker_details,
     get_microhaplotypes_for_marker,
     get_variants_for_marker,
-    get_all_chromosomes_for_species
+    get_all_chromosomes_for_species,
+    get_botloci_count,
+    is_bottom_locus
 )
-from design.colors import NUCLEOTIDE_COLORS, COLOR_PALETTES
+from design.colors import NUCLEOTIDE_COLORS
+from alignment.coordinates import (
+    MSA_AXIS_TICK_FONT,
+    MSA_AXIS_TITLE_FONT,
+    msa_chart_title,
+    relative_position,
+    relative_positions,
+)
 from alignment.aligner import MSAAligner
 from alignment.variant_annotator import VariantAnnotator
 from Bio.SeqRecord import SeqRecord
@@ -317,18 +326,25 @@ def show_marker_details(n_clicks, navigate_data, current_marker_id):
     empty_fig.update_layout(template='plotly_white', xaxis={'visible': False}, yaxis={'visible': False})
     placeholder_view = html.Div([
         html.Div("Select a locus result to view details", className="text-muted"),
-        html.Div(id='alignment-status-message', style={'display': 'none'}),
         dbc.Button(
             [html.I(className="fas fa-undo me-2"), "Show Original (Unaligned)"],
             id='show-original-btn',
             className="haplo-action-btn",
             style={'display': 'none'}
         ),
-        dcc.Graph(
-            id='msa-graph',
-            figure=empty_fig,
-            config={'displayModeBar': False},
-            style={'display': 'none'}
+        dcc.Loading(
+            html.Div([
+                html.Div(id='alignment-status-message', style={'display': 'none'}),
+                dcc.Graph(
+                    id='msa-graph',
+                    figure=empty_fig,
+                    config={'displayModeBar': False},
+                    style={'display': 'none'}
+                )
+            ], className="msa-results-loading-region"),
+            id='marker-msa-results-loading',
+            type='circle',
+            color='#319B42',
         )
         ])
     return placeholder_view, None, no_update
@@ -381,9 +397,7 @@ def create_marker_detail_view(marker_id):
             html.H5(marker['marker_id'], className="mb-1"),
             html.P([
                 html.I(className="fas fa-map-marker-alt me-2"),
-                f"{marker['chromosome_name']}: ",
-                f"{marker['position_start']:,} - {marker['position_start'] + seq_length:,} ",
-                f"({bp_length} bp)"
+                f"{bp_length} bp"
             ], className="text-muted small mb-1"),
             html.P([
                 html.I(className="fas fa-dna me-2"),
@@ -405,14 +419,17 @@ def create_marker_detail_view(marker_id):
                 )
             ]),
             dcc.Loading(
-                id='loading-alignment',
-                children=html.Div(id='alignment-status-message', children=html.Div()),
-                type='default'
-            ),
-            dcc.Graph(
-                id='msa-graph',
-                figure=loading_fig,
-                config={'displayModeBar': True, 'displaylogo': False}
+                html.Div([
+                    html.Div(id='alignment-status-message', children=html.Div()),
+                    dcc.Graph(
+                        id='msa-graph',
+                        figure=loading_fig,
+                        config={'displayModeBar': True, 'displaylogo': False}
+                    )
+                ], className="msa-results-loading-region"),
+                id='marker-msa-results-loading',
+                type='circle',
+                color='#319B42',
             ),
 
             html.Div([
@@ -585,7 +602,7 @@ def get_allele_sort_key(haplotype_name):
         return (4, 0)  # Unknown type
 
 
-def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
+def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_strand=False):
     """Create enhanced multiple sequence alignment visualization"""
     if not haplotypes:
         return go.Figure()
@@ -628,12 +645,12 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
         consensus_sequence.append(consensus_base)
 
     LIGHT_NUCLEOTIDE_COLORS = {
-        'A': '#B8E6BA',
-        'T': '#F5B7B1',
-        'G': '#FFE7A3',
-        'C': '#AED6F1',
+        'A': '#A3D9AC',
+        'G': '#F9E1A8',
+        'C': '#B5DDE8',
+        'T': '#F2A7AE',
         '-': '#F5F5F5',
-        'N': '#E0E0E0'
+        'N': '#C8CACA'
     }
 
     variant_positions = {}
@@ -732,34 +749,9 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
         x_values = list(range(marker['position_start'], marker['position_start'] + seq_length))
         x_title = 'Genomic Position'
         hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
-    # For unaligned sequences, ensure zmin and zmax are set correctly for single color
-    if not is_aligned and n_colors == 1:
-        zmin_val = 0
-        zmax_val = 0
-    else:
-        zmin_val = 0
-        zmax_val = n_colors - 1 if n_colors > 1 else 1
-    
-    # Use thicker grid (larger gaps) for unaligned sequences to make cells more distinct
-    cell_gap = 2.0 if not is_aligned else 0.5
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=numeric_matrix,
-        x=x_values,
-        y=[f"{name.split('|')[-1]}" for name in haplotype_names],
-        colorscale=colorscale,
-        zmin=zmin_val,
-        zmax=zmax_val,
-        showscale=False,
-        text=text_matrix,
-        texttemplate='%{text}',
-        textfont={"size": 12, "family": "Courier New, monospace", "color": "black"},
-        hovertemplate=hover_template,
-        xgap=cell_gap,
-        ygap=cell_gap
-    ))
 
     target_snp_x_pos = None
+    target_snp_absolute_x_pos = None
     if target_snp_position is not None:
         if is_aligned:
             if target_snp_position < len(x_values):
@@ -782,7 +774,40 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
         else:
             x_pos = marker['position_start'] + target_snp_position
 
+        target_snp_absolute_x_pos = x_pos
         target_snp_x_pos = x_pos
+        x_values = relative_positions(x_values, target_snp_x_pos, is_bottom_strand)
+        x_title = 'Relative Position to Target SNP'
+        hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        target_snp_x_pos = 0
+
+    # For unaligned sequences, ensure zmin and zmax are set correctly for single color
+    if not is_aligned and n_colors == 1:
+        zmin_val = 0
+        zmax_val = 0
+    else:
+        zmin_val = 0
+        zmax_val = n_colors - 1 if n_colors > 1 else 1
+    
+    # Keep unaligned sequence rows continuous so bases remain easy to read.
+    x_cell_gap = 0 if not is_aligned else 0.5
+    y_cell_gap = 2.0 if not is_aligned else 0.5
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=numeric_matrix,
+        x=x_values,
+        y=[f"{name.split('|')[-1]}" for name in haplotype_names],
+        colorscale=colorscale,
+        zmin=zmin_val,
+        zmax=zmax_val,
+        showscale=False,
+        text=text_matrix,
+        texttemplate='%{text}',
+        textfont={"size": 12, "family": "Courier New, monospace", "color": "black"},
+        hovertemplate=hover_template,
+        xgap=x_cell_gap,
+        ygap=y_cell_gap
+    ))
     snp_positions = set()
     for variant in variants:
         variant_type = variant.get('variant_type', '').upper()
@@ -808,7 +833,10 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
                 if snp_pos and snp_pos < marker['position_start']:
                     snp_pos = marker['position_start'] + snp_pos
             
-            if snp_pos:
+            if snp_pos is not None and target_snp_absolute_x_pos is not None:
+                snp_pos = relative_position(snp_pos, target_snp_absolute_x_pos, is_bottom_strand)
+            
+            if snp_pos is not None:
                 snp_positions.add(int(snp_pos))
     indel_positions = set()
     for variant in variants:
@@ -836,9 +864,13 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
                 if indel_pos and indel_pos < marker['position_start']:
                     indel_pos = marker['position_start'] + indel_pos
             
-            if indel_pos:
+            if indel_pos is not None and target_snp_absolute_x_pos is not None:
+                indel_pos = relative_position(indel_pos, target_snp_absolute_x_pos, is_bottom_strand)
+            
+            if indel_pos is not None:
                 indel_positions.add(int(indel_pos))
 
+    xaxis_autorange = 'reversed' if target_snp_absolute_x_pos is not None and is_bottom_strand else True
     integer_positions = []
     if x_values:
         integer_positions = sorted(set(int(pos) for pos in x_values if pos == int(pos)))
@@ -853,8 +885,8 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
                 ticktext=tick_texts,
                 tickangle=-90,
                 showgrid=False,
-                autorange=True,  # Enable autoscaling
-                tickfont=dict(family='Arial, sans-serif', size=10)
+                autorange=xaxis_autorange,
+                tickfont=MSA_AXIS_TICK_FONT
             )
         else:
             min_x = min(x_values)
@@ -866,8 +898,8 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
                 tickangle=-90,
                 tickformat=',d',
                 showgrid=False,
-                autorange=True,  # Enable autoscaling
-                tickfont=dict(family='Arial, sans-serif', size=10)
+                autorange=xaxis_autorange,
+                tickfont=MSA_AXIS_TICK_FONT
             )
     else:
         min_x = marker['position_start']
@@ -880,8 +912,8 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
             tickangle=-90,
             tickformat=',d',
             showgrid=False,
-            autorange=True,  # Enable autoscaling
-            tickfont=dict(family='Arial, sans-serif', size=10)
+            autorange=xaxis_autorange,
+            tickfont=MSA_AXIS_TICK_FONT
         )
 
     top_marker_y = len(haplotypes) - 0.5 + 0.2
@@ -958,12 +990,10 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
 
     fig.update_layout(
         title=dict(
-            text=f'<b>Multiple Sequence Alignment</b><br><sup>Marker: {marker["marker_id"]} | {marker["chromosome_name"]}:{marker["position_start"]:,}-{marker["position_end"]:,}</sup>',
+            text=msa_chart_title(marker["marker_id"], is_bottom_strand),
             x=0.5,
             xanchor='center'
         ),
-        xaxis_title=x_title,
-        yaxis_title='Allele Variant',
         height=max(400, len(haplotypes) * 30 + 120),
         template='plotly_white',
         xaxis=xaxis_config,
@@ -973,18 +1003,20 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False):
             tickmode='array',
             tickvals=list(range(len(haplotypes))),
             ticktext=[f"{name.split('|')[-1]}" for name in haplotype_names],
-            tickfont=dict(family='Arial, sans-serif', size=10)
+            tickfont=MSA_AXIS_TICK_FONT,
+            title=dict(text='Allele Variant', font=MSA_AXIS_TITLE_FONT)
         ),
         plot_bgcolor='#dee2e6' if not is_aligned else '#f8f9fa',  # Darker gray for unaligned to show grid lines better
         paper_bgcolor='#f8f9fa',  # Bootstrap bg-light color for the entire figure area (matches legend box)
         margin=dict(
-            t=90,
+            t=110,
             b=100, 
             l=150, 
             r=50
         ),
         annotations=all_annotations
     )
+    fig.update_xaxes(title=dict(text=x_title, font=MSA_AXIS_TITLE_FONT))
 
     return fig
 
@@ -1232,6 +1264,8 @@ def update_msa_visualization(alignment_data, marker_id):
         db = DatabaseManager()
         with db.shared_connection():
             marker = get_marker_details(db, marker_id)
+            bottom_loci_count = get_botloci_count(db)
+            marker_is_bottom_strand = is_bottom_locus(db, marker_id)
 
         alignment_matches_marker = (
             alignment_data and
@@ -1304,7 +1338,23 @@ def update_msa_visualization(alignment_data, marker_id):
                 status_message = html.Div()
             button_text = [html.I(className="fas fa-dna me-2"), "Show Aligned"]
 
-        msa_fig = create_msa_figure(haplotypes, variants, marker, is_aligned)
+        botloci_warning = None
+        if bottom_loci_count == 0:
+            botloci_warning = dbc.Alert([
+                html.I(className="fas fa-exclamation-triangle me-2"),
+                "No bottom-loci file has been uploaded. MSA strand orientation may be incorrect for bottom-strand loci."
+            ], color="warning", className="mt-2 mb-0", dismissable=True)
+
+        if botloci_warning:
+            status_message = html.Div([botloci_warning, status_message])
+
+        msa_fig = create_msa_figure(
+            haplotypes,
+            variants,
+            marker,
+            is_aligned,
+            marker_is_bottom_strand
+        )
 
         return msa_fig, status_message, button_text
 

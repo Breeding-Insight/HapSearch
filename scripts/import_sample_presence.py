@@ -22,8 +22,13 @@ from typing import Optional, List, Dict, Any
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.db_manager import DatabaseManager, get_or_create_species, update_haplotype_frequencies
-from database.bulk_import import bulk_load_presence, disable_constraints_and_indexes, restore_constraints_and_indexes
+from database.db_manager import DatabaseManager, get_or_create_species
+from database.presence_artifacts import (
+    counts_by_microhaplotype,
+    ensure_presence_artifact_schema,
+    upsert_presence_summary,
+    write_presence_artifact,
+)
 from database.queries import get_all_species
 from scripts.presence_metadata import (
     get_or_upsert_project,
@@ -43,6 +48,10 @@ DEFAULT_PROJECT_MAPPING_PATH = os.path.join(
 DEFAULT_OWNER_CONTACTS_PATH = os.path.join(
     _REPO_ROOT, "data", "presence_absence", "HapSearch_owner_contacts.csv"
 )
+
+
+# pandas reads gzipped matrices directly, so inputs can be stored compressed.
+PRESENCE_FILE_SUFFIXES = ('.csv', '.csv.gz', '.tsv', '.tsv.gz')
 
 
 class PresenceImporter:
@@ -244,16 +253,12 @@ class PresenceImporter:
                     INSERT INTO projects
                     (project_code, project_name, pi_name, pi_email,
                      pi_institution, pi_department, description)
-                    OUTPUT INSERTED.id
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (project_code, project_name, pi_name, pi_email,
                      pi_institution, pi_department, description)
                 )
-                row = cursor.fetchone()
-                if not row or row[0] is None:
-                    raise RuntimeError("Failed to retrieve inserted project ID")
-                project_id = int(row[0])
+                project_id = int(cursor.lastrowid)
                 print(f"  Created project: {project_code} - {project_name} (ID: {project_id})")
                 return project_id
         except Exception as e:
@@ -317,15 +322,11 @@ class PresenceImporter:
             """
             INSERT INTO samples
             (sample_code, project_id, species_id)
-            OUTPUT INSERTED.id
             VALUES (?, ?, ?)
             """,
             (sample_code, project_id, species_id)
         )
-        row = cursor.fetchone()
-        if not row or row[0] is None:
-            raise RuntimeError(f"Failed to retrieve inserted sample ID for '{sample_code}'")
-        return (int(row[0]), True)
+        return (int(cursor.lastrowid), True)
 
     def validate_haplotype_exists(self, haplotype_name: str) -> bool:
         """Check if haplotype_name exists in microhaplotypes table"""
@@ -339,7 +340,6 @@ class PresenceImporter:
         species_id: int,
         project_id: int,
         verbose: bool = True,
-        staging_chunk_size: int = 500_000,
     ) -> Dict[str, int]:
         """Import presence/absence data from CSV file"""
         if not os.path.exists(csv_path):
@@ -479,20 +479,40 @@ class PresenceImporter:
             if verbose:
                 print(f"  Built {len(pairs):,} presence pairs", flush=True)
 
-            disable_constraints_and_indexes(cursor, conn, 'allele_sample_presence', verbose)
-
-            try:
-                result = bulk_load_presence(
-                    cursor, conn,
-                    'allele_sample_presence', 'sample_id',
-                    pairs, mh_ids_in_file, sample_ids,
-                    staging_chunk_size=staging_chunk_size,
-                    verbose=verbose,
+            if verbose:
+                print("  Writing sample presence bitmaps...", flush=True)
+            ensure_presence_artifact_schema(cursor)
+            metadata = write_presence_artifact(
+                cursor,
+                pairs,
+                mh_ids_in_file,
+                sample_ids,
+                entity_type="sample",
+                species_id=species_id,
+                project_id=project_id,
+                source_path=csv_path,
+            )
+            artifact_id = metadata["id"]
+            if artifact_id:
+                upsert_presence_summary(
+                    cursor,
+                    artifact_id=artifact_id,
+                    species_id=species_id,
+                    entity_type="sample",
+                    total_count=len(sample_ids),
+                    counts_by_microhaplotype=counts_by_microhaplotype(
+                        pairs,
+                        mh_ids_in_file,
+                    ),
                 )
-                imported_count = result['inserted']
-                deleted_count = result['deleted']
-            finally:
-                restore_constraints_and_indexes(cursor, conn, 'allele_sample_presence', verbose)
+            conn.commit()
+            imported_count = len(pairs)
+            if verbose:
+                size_mb = (metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
+                print(
+                    f"  Sample presence artifact #{artifact_id} ({size_mb:.2f} MB packed)",
+                    flush=True,
+                )
 
         if verbose:
             total_elapsed = time.time() - start_time
@@ -561,12 +581,6 @@ Example:
         help='Species scientific/common name (skip interactive prompt)'
     )
     parser.add_argument('--project-id', type=int, help='Deprecated: project now resolves from each filename')
-    parser.add_argument(
-        '--staging-chunk-size',
-        type=int,
-        default=500_000,
-        help='Rows per staging-table commit chunk (controls log pressure, default 500000)'
-    )
     parser.add_argument('--quiet', action='store_true', help='Suppress verbose output')
 
     args = parser.parse_args()
@@ -620,11 +634,11 @@ Example:
                 [
                     os.path.join(args.input_path, f)
                     for f in os.listdir(args.input_path)
-                    if f.lower().endswith('.csv')
+                    if f.lower().endswith(PRESENCE_FILE_SUFFIXES)
                 ]
             )
             if not input_files:
-                raise ValueError(f"No CSV files found in directory: {args.input_path}")
+                raise ValueError(f"No CSV/TSV files found in directory: {args.input_path}")
         else:
             if not os.path.exists(args.input_path):
                 raise FileNotFoundError(f"Input file not found: {args.input_path}")
@@ -683,17 +697,12 @@ Example:
                 species_id,
                 project_id,
                 verbose,
-                staging_chunk_size=args.staging_chunk_size,
             )
             for k in aggregate.keys():
                 aggregate[k] += int(results.get(k, 0))
 
         if aggregate['errors'] > 0 and aggregate['errors'] > aggregate['imported']:
             sys.exit(1)
-
-        if verbose:
-            print("\nUpdating haplotype frequencies...", flush=True)
-        update_haplotype_frequencies(importer.db)
 
         print("\nAll imports complete!", flush=True)
         print(f"  Files processed: {len(input_files)}", flush=True)
@@ -703,6 +712,7 @@ Example:
         print(f"  Skipped alleles: {aggregate['skipped_alleles']}", flush=True)
         print(f"  Skipped samples: {aggregate['skipped_samples']}", flush=True)
         print(f"  Errors: {aggregate['errors']}", flush=True)
+        importer.db.optimize()
         sys.exit(0)
 
     except KeyboardInterrupt:
@@ -713,7 +723,8 @@ Example:
         if "9002" in str(e) or "transaction log" in str(e).lower():
             print(
                 "Hint: SQL Server transaction log is full. "
-                "Try reducing --staging-chunk-size (e.g., 200000).",
+                "The current importer stores the matrix as artifacts; check metadata/sample/project writes "
+                "and confirm the database was initialized with the current schema.",
                 file=sys.stderr,
             )
         import traceback

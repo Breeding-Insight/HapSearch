@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize the HaploSearch Microsoft SQL Server database."""
+"""Initialize the HaploSearch SQLite database."""
 
 import os
 import sys
@@ -7,152 +7,77 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
-
-try:
-    import pyodbc
-    PYODBC_AVAILABLE = True
-except ImportError:
-    PYODBC_AVAILABLE = False
+from database.db_manager import DatabaseManager, SCHEMA_PATH
 
 
 def init_database(schema_file: str = None, force: bool = False,
-                  connection_string: str = None):
-    """Initialize the configured Microsoft SQL Server database."""
-    if not PYODBC_AVAILABLE:
-        print("Error: pyodbc is required for Microsoft SQL Server connections.")
-        print("Install it with: pip install pyodbc")
-        return False
-
-    if schema_file is None:
-        schema_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'schema_mssql.sql'
-        )
-
-    connection_string = connection_string or config.DATABASE_CONNECTION_STRING
+                  db_path: str = None):
+    """Create the SQLite schema, optionally replacing an existing database file."""
+    schema_file = schema_file or SCHEMA_PATH
+    db_path = db_path or config.SQLITE_DB_PATH
 
     if not os.path.exists(schema_file):
         print(f"Error: Schema file not found: {schema_file}")
         return False
 
-    with open(schema_file, 'r') as f:
-        schema_sql = f.read()
+    if force and os.path.exists(db_path):
+        print(f"Force mode: removing existing database {db_path}")
+        for suffix in ('', '-wal', '-shm', '-journal'):
+            if os.path.exists(db_path + suffix):
+                os.remove(db_path + suffix)
 
-    print("Connecting to Microsoft SQL Server database...")
-    print(f"Connection string: {connection_string.split('PWD=')[0]}PWD=***")
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    print(f"Initializing SQLite database at {db_path}...")
 
-    conn = None
     try:
-        conn = pyodbc.connect(connection_string)
-        cursor = conn.cursor()
-
-        if force:
-            print("Force mode: dropping existing tables...")
-            tables = [
-                'allele_project_presence', 'allele_sample_presence',
-                'microhaplotype_samples',
-                'variants', 'microhaplotypes', 'samples', 'projects',
-                'users', 'project_contacts', 'contacts',
-                'markers', 'chromosomes', 'species'
-            ]
-            for table in tables:
-                cursor.execute(f"DROP TABLE IF EXISTS [{table}]")
-            conn.commit()
-
-        print("Creating schema...")
-        statements = [s.strip() for s in schema_sql.split('GO') if s.strip()]
-        for statement in statements:
-            cursor.execute(statement)
-
-        conn.commit()
-        print("Schema created successfully!")
-
-        cursor.execute("""
-            SELECT TABLE_NAME
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_TYPE = 'BASE TABLE'
-            ORDER BY TABLE_NAME
-        """)
-        tables = cursor.fetchall()
-        print(f"\nCreated {len(tables)} tables:")
-        for table in tables:
-            print(f"  - {table[0]}")
-
-        return True
-
-    except pyodbc.Error as e:
-        print(f"Error creating schema: {e}")
-        if conn:
-            conn.rollback()
-        return False
+        db = DatabaseManager(db_path=db_path, read_only=False)
+        db.ensure_schema(schema_file)
+        tables = db.execute_query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )
     except Exception as e:
-        print(f"Unexpected error: {e}")
-        if conn:
-            conn.rollback()
+        print(f"Error creating schema: {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
+
+    print("Schema created successfully!")
+    print(f"\nDatabase has {len(tables)} tables:")
+    for table in tables:
+        print(f"  - {table['name']}")
+    return True
 
 
-def add_sample_data():
+def add_sample_data(db_path: str = None):
     """Add sample data for testing."""
-    if not PYODBC_AVAILABLE:
-        print("Error: pyodbc is required for Microsoft SQL Server connections.")
-        return False
-
-    conn = None
+    db = DatabaseManager(db_path=db_path, read_only=False)
     try:
-        conn = pyodbc.connect(config.DATABASE_CONNECTION_STRING)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO species (name, common_name, description)
-            VALUES (?, ?, ?)
-        """, ('Homo sapiens', 'Human', 'Sample human data'))
-        cursor.execute("SELECT SCOPE_IDENTITY()")
-        species_id = cursor.fetchone()[0]
-
-        for i in range(1, 23):
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
             cursor.execute("""
+                INSERT INTO species (name, common_name, description)
+                VALUES (?, ?, ?)
+            """, ('Homo sapiens', 'Human', 'Sample human data'))
+            species_id = cursor.lastrowid
+
+            chromosome_names = [f"Chr{i}" for i in range(1, 23)] + ['ChrX', 'ChrY']
+            cursor.executemany("""
                 INSERT INTO chromosomes (species_id, chromosome_name)
                 VALUES (?, ?)
-            """, (species_id, f"Chr{i}"))
+            """, [(species_id, name) for name in chromosome_names])
 
-        cursor.execute("""
-            INSERT INTO chromosomes (species_id, chromosome_name)
-            VALUES (?, 'ChrX')
-        """, (species_id,))
-        cursor.execute("""
-            INSERT INTO chromosomes (species_id, chromosome_name)
-            VALUES (?, 'ChrY')
-        """, (species_id,))
-
-        cursor.execute("""
-            INSERT INTO projects (project_code, project_name, pi_name, pi_email,
-                                pi_institution, pi_department, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, ('PROJ001', 'Sample Project', 'Dr. Jane Smith',
-              'jane.smith@university.edu', 'University of Example',
-              'Department of Biology', 'Sample project for testing'))
-
-        conn.commit()
-        print("\nSample data added successfully!")
-        return True
-
-    except pyodbc.Error as e:
-        print(f"Error adding sample data: {e}")
-        if conn:
-            conn.rollback()
-        return False
+            cursor.execute("""
+                INSERT INTO projects (project_code, project_name, pi_name, pi_email,
+                                    pi_institution, pi_department, description)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, ('PROJ001', 'Sample Project', 'Dr. Jane Smith',
+                  'jane.smith@university.edu', 'University of Example',
+                  'Department of Biology', 'Sample project for testing'))
     except Exception as e:
-        print(f"Unexpected error: {e}")
-        if conn:
-            conn.rollback()
+        print(f"Error adding sample data: {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
+
+    print("\nSample data added successfully!")
+    return True
 
 
 if __name__ == '__main__':
@@ -161,21 +86,31 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Initialize HaploSearch database')
     parser.add_argument('--schema', help='Path to schema SQL file')
     parser.add_argument('--force', action='store_true',
-                        help='Drop existing tables before creating schema')
+                        help='Delete the existing database file before creating the schema')
     parser.add_argument('--sample-data', action='store_true',
                         help='Add sample data for testing')
-    parser.add_argument('--connection-string',
-                        help='Microsoft SQL Server connection string (overrides config)')
+    parser.add_argument('--db-path',
+                        help='SQLite database path (overrides SQLITE_DB_PATH)')
+    parser.add_argument('--optimize', action='store_true',
+                        help='Refresh planner statistics and compact an existing '
+                             'database (run after imports, before building the image)')
 
     args = parser.parse_args()
+
+    if args.optimize:
+        db = DatabaseManager(db_path=args.db_path, read_only=False)
+        db.optimize(vacuum=True)
+        size_mb = os.path.getsize(db.db_path) / 1024 / 1024
+        print(f"Optimized {db.db_path} ({size_mb:.1f} MB)")
+        sys.exit(0)
 
     success = init_database(
         schema_file=args.schema,
         force=args.force,
-        connection_string=args.connection_string
+        db_path=args.db_path
     )
 
     if success and args.sample_data:
-        success = add_sample_data()
+        success = add_sample_data(args.db_path)
 
     sys.exit(0 if success else 1)

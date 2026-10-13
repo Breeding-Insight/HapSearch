@@ -1,0 +1,21 @@
+# gcloud run deploy --source uploads this tree; without this file it would
+# fall back to .gitignore, which excludes the SQLite database the image needs.
+data/*
+!data/hapsearch.db
+
+.git
+.github
+.venv
+venv
+env
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.env
+.env.*
+*.pem
+*.key
+tests
+docs
+landing
+.build-cache
