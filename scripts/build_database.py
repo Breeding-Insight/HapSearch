@@ -16,7 +16,8 @@ with "/" is relative to the data repository root. Paths may use wildcards
 pattern must match exactly one file, and ``{fasta}`` in a presence path stands
 for the chosen FASTA's name without its extension. A source can also come from
 another GitHub repository at a pinned tag or commit, using your git credentials
-locally or GITHUB_TOKEN in Cloud Build.
+locally or a token in GITHUB_TOKEN. (Cloud Build only clones the data
+repository, so in Cloud Build keep every input there.)
 """
 
 import argparse
