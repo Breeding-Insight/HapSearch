@@ -1,16 +1,21 @@
 # manifest.toml: what goes into the HapSearch database.
 #
-# Save this as {species}/data/hapSearch/manifest.toml in the data repository
+# Save this as data/hapSearch/manifest.toml (or {species}/data/hapSearch/) in the data repository
 # (Breeding-Insight/alfalfa_haplotype_db), next to the HapSearch inputs.
 # scripts/build_database.py in the HapSearch app repository reads it; see
 # docs/updating-data.md there.
 #
-# Paths are relative to this file's folder. A path starting with "/" is
-# relative to the repository root (used here for the FASTA). Matrices may be
-# gzipped (.csv.gz); gzip anything over ~50 MB, since GitHub rejects files
-# over 100 MB.
+# Written once: with the patterns below, adding or replacing files is enough
+# and this file does not need editing.
 #
-# Expected layout of {species}/data/hapSearch/:
+# Paths are relative to this file's folder. A path starting with "/" is
+# relative to the repository root (used here for the FASTA in data/versions/). Wildcards (*)
+# are allowed: the FASTA pattern picks the highest version, and any other
+# single-file pattern must match exactly one file. To pin a version (e.g. to
+# roll back), write the exact file name instead. Matrices may be gzipped
+# (.csv.gz); gzip anything over ~50 MB, since GitHub rejects files over 100 MB.
+#
+# Expected layout of data/hapSearch/:
 #   manifest.toml
 #   HapSearch_mapping.csv
 #   HapSearch_owner_contacts.csv
@@ -28,19 +33,18 @@ owner_contacts = "HapSearch_owner_contacts.csv"
 [[species]]
 name = "Medicago sativa"
 common_name = "Alfalfa"
-# The allele database the presence calls were made against. Keep its version
-# in step with the hapPA matrix below.
-fasta = "/PATH/FROM/REPO/ROOT/alfalfa_allele_db_v055.fa"
-# Optional: bottom-strand marker IDs, one per line.
-botloci = "20201030-BI-Alfalfa_SNPs_DArTag-probe-design_f180bp.botloci"
+# The allele database. The highest version matching the pattern is used.
+fasta = "/data/versions/alfalfa_allele_db_v*.fa"
+# Optional: bottom-strand marker IDs, one per line. Keep a single .botloci file.
+botloci = "*.botloci"
 # A folder (every .csv/.csv.gz/.tsv inside is imported), a file, or a list.
 # Every file name's DAl... token needs a row in HapSearch_mapping.csv.
 sample_presence = "Sample_hapStatus"
-# Optional project-level matrix (columns are projects). Use the one matching
-# the FASTA version; the *_fileList.txt files are not needed by the build.
-project_presence = [
-  "hapPA/alfalfa_allele_db_v055_hapPA_matrix.csv",
-]
+# Optional project-level matrix (columns are projects). {fasta} is the chosen
+# FASTA's name without extension, so the matrix always matches the FASTA
+# version; the build stops if that version has no matrix. The
+# *_fileList.txt files are not needed by the build.
+project_presence = "hapPA/{fasta}_hapPA_matrix.csv"
 
 # Another species gets its own {species}/data/hapSearch/ folder; to build them
 # into one database, add another [[species]] block with "/"-rooted paths.

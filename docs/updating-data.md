@@ -7,11 +7,11 @@ repository, then publish a new build.
 
 ## Where the inputs live
 
-Everything HapSearch reads is listed in `{species}/data/hapSearch/manifest.toml` in the
+Everything HapSearch reads is listed in `data/hapSearch/manifest.toml` in the
 data repository (copy [manifest.example.toml](manifest.example.toml) to start one):
 
 ```text
-{species}/data/hapSearch/
+data/hapSearch/
   manifest.toml                  what goes into the database
   HapSearch_mapping.csv          genotyping source (DAl...) -> project
   HapSearch_owner_contacts.csv   project owners' contact details
@@ -20,8 +20,8 @@ data repository (copy [manifest.example.toml](manifest.example.toml) to start on
   hapPA/                         *_hapPA_matrix.csv per FASTA version
 ```
 
-The FASTA allele database stays where it already lives in that repository; the
-manifest points at it with a path starting with `/` (the repository root).
+The FASTA allele databases stay where they already live, in `data/versions/`; the
+manifest points there with a path starting with `/` (the repository root).
 
 Rules the build enforces:
 
@@ -35,20 +35,26 @@ Rules the build enforces:
 
 ## Common changes
 
-**New genotyping order:** add its `*_hapStatus.csv` to `Sample_hapStatus/`, add a row
-for its `DAl...` number to `HapSearch_mapping.csv`, and add the owner to
-`HapSearch_owner_contacts.csv` if they are new.
+The manifest uses patterns (see [manifest.example.toml](manifest.example.toml)), so it
+is written once. Every update below is just adding or replacing files.
 
-**New FASTA version:** commit the new FASTA, add the matching `*_hapPA_matrix.csv` to
-`hapPA/`, and update `fasta` and `project_presence` in `manifest.toml` together.
+| Update | What to do |
+|---|---|
+| New genotyping order | Add its `*_hapStatus.csv` to `Sample_hapStatus/`, add a row for its `DAl...` number to `HapSearch_mapping.csv`, and add the owner to `HapSearch_owner_contacts.csv` if they are new. |
+| Re-called genotyping order | Replace the file in `Sample_hapStatus/`. If the new file has a different name, delete the old one, or both are imported. |
+| New FASTA version | Commit the new FASTA and its matrix as `hapPA/<fasta name>_hapPA_matrix.csv`. The build uses the highest FASTA version and that version's matrix, and stops if the matrix is missing. |
+| Mapping or contact changes | Edit `HapSearch_mapping.csv` or `HapSearch_owner_contacts.csv`; keep the file names. |
+| New probe design | Replace the `.botloci` file. Keep only one; with two, the build stops and asks which. |
+| Roll back to an older FASTA | Write that FASTA's exact file name as `fasta` in the manifest; the matrix follows it. |
 
-**Correcting a file:** commit the corrected file. Git keeps every earlier version.
+The build log (and the database's `build_info` table) lists which FASTA, matrix and
+other files were used, so you can always confirm what was picked.
 
 Commit the change, then tag the commit so the build can be pinned to it, for example:
 
 ```bash
 git tag hapsearch-2026-10-13
-git push origin main --tags
+git push origin master --tags
 ```
 
 ## Check the build on your computer (optional, recommended)
@@ -71,7 +77,7 @@ python app.py
 
 1. In the Google Cloud console, open **Cloud Build → Triggers**.
 2. On the HapSearch trigger, click **Run**.
-3. Set `_DATA_REF` to the tag you pushed (or leave it as `main` for the latest commit),
+3. Set `_DATA_REF` to the tag you pushed (or leave it as `master` for the latest commit),
    and click **Run trigger**.
 
 The pipeline ([cloudbuild.yaml](../cloudbuild.yaml)) clones the data repository at that

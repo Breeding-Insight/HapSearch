@@ -2,7 +2,7 @@
 """Build the HapSearch SQLite database from a data repository.
 
 Everything the database contains is described by a ``manifest.toml`` in the
-data repository, normally ``{species}/data/hapSearch/manifest.toml`` next to the
+data repository, normally ``data/hapSearch/manifest.toml`` (or ``{species}/data/hapSearch/``) next to the
 HapSearch inputs (see docs/updating-data.md). The build always starts from an empty
 database, runs every import in order, optimizes the file, checks the result and
 compares it with the previous build. The output file is only replaced when every
@@ -11,7 +11,10 @@ check passes, so a failed build never leaves a half-built database behind.
     python scripts/build_database.py --data-repo ../alfalfa_haplotype_db
 
 Paths in the manifest are relative to the manifest's folder; a path starting
-with "/" is relative to the data repository root. A source can also come from
+with "/" is relative to the data repository root. Paths may use wildcards
+(``*``): a FASTA pattern selects the highest version, every other single-file
+pattern must match exactly one file, and ``{fasta}`` in a presence path stands
+for the chosen FASTA's name without its extension. A source can also come from
 another GitHub repository at a pinned tag or commit, using your git credentials
 locally or GITHUB_TOKEN in Cloud Build.
 """
@@ -19,10 +22,12 @@ locally or GITHUB_TOKEN in Cloud Build.
 import argparse
 import base64
 import datetime
+import glob
 import gzip
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -39,6 +44,7 @@ from scripts.import_sample_presence import PRESENCE_FILE_SUFFIXES  # noqa: E402
 from scripts.init_database import init_database  # noqa: E402
 
 DEFAULT_MAX_SKIPPED_ALLELE_FRACTION = 0.02
+FASTA_SUFFIXES = (".fa.gz", ".fasta.gz", ".fna.gz", ".fa", ".fasta", ".fna")
 COMPARED_TABLES = [
     "species", "chromosomes", "markers", "microhaplotypes", "botloci",
     "projects", "samples", "contacts", "presence_artifacts",
@@ -121,8 +127,30 @@ def _local_path(data_repo: str, base_dir: str, spec: str) -> str:
     return os.path.normpath(os.path.join(base_dir, spec))
 
 
+def _has_wildcard(spec: str) -> bool:
+    return any(char in spec for char in "*?[")
+
+
+def _version_key(path: str):
+    """Sort so that v055 > v054 and v100 > v99."""
+    return [int(part) if part.isdigit() else part.lower()
+            for part in re.split(r"(\d+)", os.path.basename(path))]
+
+
+def fasta_stem(path: str) -> str:
+    name = os.path.basename(path)
+    for suffix in FASTA_SUFFIXES:
+        if name.lower().endswith(suffix):
+            return name[: -len(suffix)]
+    return os.path.splitext(name)[0]
+
+
+def _glob_files(pattern_path: str) -> List[str]:
+    return sorted(path for path in glob.glob(pattern_path) if os.path.isfile(path))
+
+
 def find_manifest(data_repo: str, manifest: Optional[str]) -> str:
-    """Use --manifest if given, else the one manifest under */data/hapSearch/."""
+    """Use --manifest if given, else the one in data/hapSearch/ or */data/hapSearch/."""
     if not os.path.isdir(data_repo):
         raise BuildError(
             f"Data repository not found at {data_repo}. Clone "
@@ -133,26 +161,47 @@ def find_manifest(data_repo: str, manifest: Optional[str]) -> str:
         if not os.path.isfile(path):
             raise BuildError(f"Manifest not found: {path}")
         return path
-    candidates = [os.path.join(data_repo, "manifest.toml")] + sorted(
+    candidates = [
+        os.path.join(data_repo, "manifest.toml"),
+        os.path.join(data_repo, "data", "hapSearch", "manifest.toml"),
+    ] + sorted(
         os.path.join(data_repo, name, "data", "hapSearch", "manifest.toml")
         for name in os.listdir(data_repo)
     )
     found = [path for path in candidates if os.path.isfile(path)]
     if len(found) != 1:
         raise BuildError(
-            "Expected one manifest.toml in {species}/data/hapSearch/ of the data repository, "
+            "Expected one manifest.toml in data/hapSearch/ (or {species}/data/hapSearch/) "
+            "of the data repository, "
             f"found {len(found)}; pass --manifest to choose"
         )
     return found[0]
 
 
 def _resolve_source(spec, data_repo: str, base_dir: str, cache_dir: str,
-                    plan_sources: Dict[str, str], label: str) -> str:
-    """A source is a path in the data repo, or {repo, ref, path} on GitHub."""
+                    plan_sources: Dict[str, str], label: str,
+                    pick_newest: bool = False) -> str:
+    """A source is a path or pattern in the data repo, or {repo, ref, path} on GitHub.
+
+    A pattern must match exactly one file, unless ``pick_newest`` is set (for the
+    FASTA), in which case the highest version is used.
+    """
     if isinstance(spec, str):
         path = _local_path(data_repo, base_dir, spec)
-        if not os.path.exists(path):
+        if _has_wildcard(spec):
+            matches = _glob_files(path)
+            if not matches:
+                raise BuildError(f"{label}: {spec} matches no files in the data repository")
+            if len(matches) > 1 and not pick_newest:
+                names = ", ".join(os.path.relpath(match, data_repo) for match in matches)
+                raise BuildError(
+                    f"{label}: {spec} matches {len(matches)} files ({names}); "
+                    "remove the extras or name one file in manifest.toml"
+                )
+            path = max(matches, key=_version_key)
+        elif not os.path.isfile(path):
             raise BuildError(f"{label}: {spec} does not exist in the data repository")
+        plan_sources[label] = os.path.relpath(path, data_repo)
         return path
     if isinstance(spec, dict) and {"repo", "ref", "path"} <= set(spec):
         _log(f"Fetching {label} from {spec['repo']}@{spec['ref']}:{spec['path']}")
@@ -162,13 +211,29 @@ def _resolve_source(spec, data_repo: str, base_dir: str, cache_dir: str,
     raise BuildError(f"{label}: expected a path or {{ repo, ref, path }}, got {spec!r}")
 
 
-def _expand_presence(spec, data_repo: str, base_dir: str, label: str) -> List[str]:
-    """Presence inputs are a file, a folder of matrices, or a list of either."""
+def _expand_presence(spec, data_repo: str, base_dir: str, label: str, fasta: str,
+                     plan_sources: Dict[str, str]) -> List[str]:
+    """Presence inputs are files, folders of matrices or patterns, or a list of them.
+
+    ``{fasta}`` is replaced with the chosen FASTA's name, so a project matrix
+    named after its FASTA version follows the FASTA automatically.
+    """
     items = spec if isinstance(spec, list) else [spec]
+    stem = fasta_stem(fasta)
     files: List[str] = []
-    for item in items:
+    for raw_item in items:
+        item = raw_item.replace("{fasta}", stem)
+        hint = f" (for FASTA {os.path.basename(fasta)})" if "{fasta}" in raw_item else ""
         path = _local_path(data_repo, base_dir, item)
-        if os.path.isdir(path):
+        if _has_wildcard(item):
+            matches = [
+                match for match in _glob_files(path)
+                if match.lower().endswith(PRESENCE_FILE_SUFFIXES)
+            ]
+            if not matches:
+                raise BuildError(f"{label}: {item} matches no CSV/TSV files{hint}")
+            files.extend(matches)
+        elif os.path.isdir(path):
             matches = sorted(
                 os.path.join(path, name) for name in os.listdir(path)
                 if name.lower().endswith(PRESENCE_FILE_SUFFIXES)
@@ -179,7 +244,11 @@ def _expand_presence(spec, data_repo: str, base_dir: str, label: str) -> List[st
         elif os.path.isfile(path):
             files.append(path)
         else:
-            raise BuildError(f"{label}: {item} does not exist in the data repository")
+            raise BuildError(f"{label}: {item} does not exist in the data repository{hint}")
+    if len(files) <= 3:
+        plan_sources[label] = ", ".join(os.path.relpath(path, data_repo) for path in files)
+    else:
+        plan_sources[label] = f"{len(files)} files"
     return files
 
 
@@ -200,11 +269,12 @@ def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None) ->
         name = entry.get("name")
         if not name or "fasta" not in entry:
             raise BuildError("manifest.toml: every [[species]] needs name and fasta")
+        fasta = _resolve_source(entry["fasta"], data_repo, base_dir, cache_dir, sources,
+                                f"{name} FASTA", pick_newest=True)
         species.append(SpeciesInputs(
             name=name,
             common_name=entry.get("common_name"),
-            fasta=_resolve_source(entry["fasta"], data_repo, base_dir, cache_dir, sources,
-                                  f"{name} FASTA"),
+            fasta=fasta,
             botloci=(
                 _resolve_source(entry["botloci"], data_repo, base_dir, cache_dir, sources,
                                 f"{name} botloci")
@@ -212,12 +282,12 @@ def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None) ->
             ),
             sample_presence=(
                 _expand_presence(entry["sample_presence"], data_repo, base_dir,
-                                 f"{name} sample_presence")
+                                 f"{name} sample presence", fasta, sources)
                 if entry.get("sample_presence") else []
             ),
             project_presence=(
                 _expand_presence(entry["project_presence"], data_repo, base_dir,
-                                 f"{name} project_presence")
+                                 f"{name} project presence", fasta, sources)
                 if entry.get("project_presence") else []
             ),
         ))

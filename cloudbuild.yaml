@@ -9,7 +9,7 @@ substitutions:
   _REPOSITORY: hapsearch
   _SERVICE: hapsearch
   _DATA_REPO: Breeding-Insight/alfalfa_haplotype_db
-  _DATA_REF: main
+  _DATA_REF: master
 
 steps:
   # 1. Clone the data repository. The token is sent as an HTTP header so it
