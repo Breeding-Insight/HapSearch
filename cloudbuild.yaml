@@ -1,43 +1,86 @@
-# Builds and deploys HapSearch. The SQLite database is not in git, so the
-# first step copies the current build from Cloud Storage; publishing a new
-# database is an upload to that bucket followed by a new build.
+# Builds the HapSearch database from the data repository, then builds and
+# deploys the app. Run it manually from the Cloud Build trigger; set _DATA_REF
+# to the data repository tag (or branch) to publish. See docs/updating-data.md.
+#
+# Needs a Secret Manager secret "hapsearch-github-token": a GitHub token with
+# read access to the data repository, available to the Cloud Build account.
 substitutions:
   _REGION: us-west1
   _REPOSITORY: hapsearch
   _SERVICE: hapsearch
-  _DATABASE_URI: gs://YOUR_BUCKET/hapsearch/hapsearch.db
+  _DATA_REPO: Breeding-Insight/alfalfa_haplotype_db
+  _DATA_REF: main
 
 steps:
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
+  # 1. Clone the data repository. The token is sent as an HTTP header so it
+  #    never appears in the clone URL or the log.
+  - id: clone-data
+    name: gcr.io/cloud-builders/git
+    entrypoint: bash
+    secretEnv: [GITHUB_TOKEN]
     args:
-      - storage
-      - cp
-      - ${_DATABASE_URI}
-      - data/hapsearch.db
-  - name: gcr.io/cloud-builders/docker
+      - -c
+      - |
+        set -euo pipefail
+        auth="$(printf 'x-access-token:%s' "$$GITHUB_TOKEN" | base64 -w0)"
+        git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $$auth" \
+          clone --quiet --depth 1 --branch "${_DATA_REF}" \
+          "https://github.com/${_DATA_REPO}.git" /workspace/data-repo
+        git -C /workspace/data-repo log -1 --format='Data repo commit: %H %s'
+
+  # 2. Build and check the database. The build stops here if any import or
+  #    check fails, so nothing is deployed.
+  - id: build-database
+    name: python:3.13-slim
+    entrypoint: bash
+    secretEnv: [GITHUB_TOKEN]
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # git fetches pinned sources; g++ builds parmed (a dash-bio dependency).
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends git g++ > /dev/null
+        pip install --quiet --root-user-action=ignore -r requirements.txt
+        python -W ignore scripts/build_database.py \
+          --data-repo /workspace/data-repo \
+          --output data/hapsearch.db
+
+  - id: build-image
+    name: gcr.io/cloud-builders/docker
     args:
       - build
       - --tag
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
       - .
-  - name: gcr.io/cloud-builders/docker
+
+  - id: push-image
+    name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
+
+  # The data version is recorded on the revision so the console shows what
+  # each revision serves.
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
       - run
       - deploy
       - ${_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
       - --region=${_REGION}
       - --platform=managed
+      - --update-env-vars=HAPSEARCH_DATA_VERSION=${_DATA_REF}
       - --quiet
 
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/hapsearch-github-token/versions/latest
+      env: GITHUB_TOKEN
+
 images:
-  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
 
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -9,39 +9,25 @@ stored image and Firestore storage.
 
 ## How the data gets into the image
 
-The data changes only when new FASTA or presence/absence files are imported, so the
-database is built ahead of time, then baked into the image:
-
-1. Build `data/hapsearch.db` with the import scripts (below), or once from the old
-   SQL Server with `scripts/migrate_mssql_to_sqlite.py`.
-2. Run `python scripts/init_database.py --optimize` on it. This refreshes the query
-   planner's statistics and compacts the file. Skipping it makes artifact-backed
-   filters (such as the sample filter) roughly 100 times slower.
-3. Upload it to Cloud Storage and build a new image. Cloud Run switches revisions
-   atomically, so visitors never see a half-updated database.
+The database is rebuilt from scratch from the files in
+`Breeding-Insight/alfalfa_haplotype_db` and baked into the image. Cloud Build
+does this on every run (`cloudbuild.yaml`): clone the data repository at a tag,
+run `scripts/build_database.py`, build the image, deploy. Cloud Run switches
+revisions atomically, so visitors never see a half-updated database. See
+[updating-data.md](updating-data.md) for adding data and publishing.
 
 Inside the container the file is opened read-only and immutable
 (`SQLITE_READ_ONLY=true`, set in the `Dockerfile`). Each Gunicorn worker keeps the
 presence bitmaps it has read in memory; they cannot go stale because a new database
 always means a new revision.
 
-### Building the database
+### Migrating from SQL Server
 
-```bash
-python scripts/init_database.py --force
-python scripts/import_fasta.py data/fasta/alfalfa_allele_db_v052.fa "Medicago sativa" --common-name Alfalfa
-python scripts/import_botloci.py data/markers/20201030-BI-Alfalfa_SNPs_DArTag-probe-design_f180bp.botloci
-python scripts/import_sample_presence.py data/presence_absence/sample --species-id 1
-python scripts/import_project_presence.py data/presence_absence/project/20260413-alfalfa-v52-madc-filter-miss-files_hapPA_matrix.csv
-python scripts/init_database.py --optimize
-```
-
-With the current alfalfa data this takes about 3 minutes and produces a 74 MB file.
-
-### Migrating from SQL Server instead
-
-The migration copies every table with its IDs, and converts the legacy `.npz`
-lookup artifacts into bitmap rows inside the database. It needs `pyodbc` and an ODBC
+Research data does not need migrating: it is rebuilt from the data repository.
+The migration is useful for the user allowlist, which can then be copied into
+Firestore with `manage_users.py --store firestore copy-from-sqlite` (below). It
+copies every table with its IDs, and converts the legacy `.npz` lookup artifacts
+into bitmap rows inside the database. It needs `pyodbc` and an ODBC
 driver, which are no longer app dependencies:
 
 ```bash
@@ -139,9 +125,10 @@ gcloud run deploy hapsearch \
   --set-secrets="SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest"
 ```
 
-`--source .` uploads the working tree using `.gcloudignore`, which keeps
-`data/hapsearch.db` and leaves out the raw import files. For a Cloud Build trigger,
-use `cloudbuild.yaml` and set `_DATABASE_URI` to the database's Cloud Storage path.
+Deploy through the Cloud Build trigger (`cloudbuild.yaml`), which builds the
+database first. `gcloud run deploy --source .` also works after building
+`data/hapsearch.db` locally; `.gcloudignore` keeps that file and leaves out the
+raw import files.
 
 Cloud Run terminates HTTPS, so keep `TLS_ENABLED=false`. The ORCID redirect URI must be
 `https://YOUR-SERVICE-URL/auth/callback`.

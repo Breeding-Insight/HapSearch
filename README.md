@@ -45,10 +45,11 @@ tests/       Automated tests
 
 ## Setup and development
 
-All data lives in one SQLite file (`data/hapsearch.db` by default), built with the scripts in `scripts/`. Local development requires Python 3.13+; the Docker Compose files mount the database read-write. In production the file ships read-only inside the container image on Google Cloud Run. See the [Cloud Run deployment guide](docs/cloud-run.md) and [.env example](.env.example) for configuration details.
+All data lives in one SQLite file (`data/hapsearch.db` by default), rebuilt with `scripts/build_database.py` from the inputs in [alfalfa_haplotype_db](https://github.com/Breeding-Insight/alfalfa_haplotype_db) (see [Updating data](docs/updating-data.md)). Local development requires Python 3.13+; the Docker Compose files mount the database read-write. In production the file ships read-only inside the container image on Google Cloud Run. See the [Cloud Run deployment guide](docs/cloud-run.md) and [.env example](.env.example) for configuration details.
 
 ## Documentation
 
 - [Product plan and roadmap](HaploSearch_Plan_Document.md)
-- [Cloud Run deployment and database builds](docs/cloud-run.md)
+- [Updating data and publishing a new version](docs/updating-data.md)
+- [Cloud Run deployment](docs/cloud-run.md)
 - [Visualization color system](design/color_palettes.md)

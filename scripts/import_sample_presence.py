@@ -50,6 +50,10 @@ DEFAULT_OWNER_CONTACTS_PATH = os.path.join(
 )
 
 
+# pandas reads gzipped matrices directly, so inputs can be stored compressed.
+PRESENCE_FILE_SUFFIXES = ('.csv', '.csv.gz', '.tsv', '.tsv.gz')
+
+
 class PresenceImporter:
     """Import allele-sample presence/absence data from CSV files"""
 
@@ -630,11 +634,11 @@ Example:
                 [
                     os.path.join(args.input_path, f)
                     for f in os.listdir(args.input_path)
-                    if f.lower().endswith('.csv')
+                    if f.lower().endswith(PRESENCE_FILE_SUFFIXES)
                 ]
             )
             if not input_files:
-                raise ValueError(f"No CSV files found in directory: {args.input_path}")
+                raise ValueError(f"No CSV/TSV files found in directory: {args.input_path}")
         else:
             if not os.path.exists(args.input_path):
                 raise FileNotFoundError(f"Input file not found: {args.input_path}")
