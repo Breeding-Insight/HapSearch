@@ -96,10 +96,12 @@ previous revision and **Manage traffic → 100%**. Fix the data, then publish ag
 
 ## One-time setup (already done once per project)
 
-- A Secret Manager secret `hapsearch-github-token` holding a GitHub fine-grained token
-  with read-only **Contents** access to `Breeding-Insight/alfalfa_haplotype_db`, with
-  `roles/secretmanager.secretAccessor` granted to the Cloud Build service account.
+- Cloud Build's GitHub connection (`github`, 2nd gen) with both
+  `Breeding-Insight/HapSearch` and `Breeding-Insight/alfalfa_haplotype_db` linked.
+  Builds read the data repository through it, so there is no token to renew. A new
+  species repository is linked the same way, then named in the trigger's
+  `_DATA_REPO` and `_DATA_REPO_LINK`.
 - A Cloud Build trigger on the HapSearch app repository using `cloudbuild.yaml`, with
-  **manual** invocation and the substitutions `_DATA_REPO` and `_DATA_REF`.
+  **manual** invocation and the substitution `_DATA_REF`.
 - The Cloud Run service, Firestore database and service identity described in
   [cloud-run.md](cloud-run.md).

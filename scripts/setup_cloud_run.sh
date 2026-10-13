@@ -10,8 +10,9 @@
 # Safe to re-run: anything that already exists is left alone. It creates the
 # Artifact Registry repository, the Firestore database, two service accounts
 # (one for the app, one for Cloud Build) with only the roles they need, and the
-# secrets. It asks for the values it cannot generate. Afterwards, connect the
-# GitHub repository and create the trigger as printed at the end.
+# secrets. It asks for the values it cannot generate. Afterwards, connect
+# GitHub to Cloud Build and create the trigger as printed at the end; builds
+# read the data repository through that connection, so no GitHub token is stored.
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
@@ -80,8 +81,10 @@ grant_project_role() {
 }
 # The app only reads the allowlist.
 grant_project_role "${RUNTIME_SA}" roles/datastore.viewer
-# Cloud Build pushes images, deploys the service and writes build logs.
+# Cloud Build pushes images, deploys the service, writes build logs and gets
+# short-lived read-only tokens for repositories linked to its GitHub connection.
 grant_project_role "${BUILD_SA}" roles/run.admin
+grant_project_role "${BUILD_SA}" roles/cloudbuild.readTokenAccessor
 grant_project_role "${BUILD_SA}" roles/artifactregistry.writer
 grant_project_role "${BUILD_SA}" roles/logging.logWriter
 gcloud iam service-accounts add-iam-policy-binding "${RUNTIME_SA}" \
@@ -122,18 +125,6 @@ copy_or_prompt hapsearch-orcid-client-id "ORCID client ID" 0 \
   allomate-orcid-client-id hapapp-orcid-client-id
 copy_or_prompt hapsearch-orcid-client-secret "ORCID client secret" 1 \
   allomate-orcid-client-secret hapapp-orcid-client-secret
-if ! secret_exists hapsearch-github-token; then
-  cat <<'HELP'
-GitHub token for reading the data repository. Create a fine-grained token at
-https://github.com/settings/personal-access-tokens/new with
-  Resource owner: Breeding-Insight
-  Repository access: Only select repositories -> alfalfa_haplotype_db
-  Permissions: Contents -> Read-only
-(an organization owner may need to approve it).
-HELP
-fi
-copy_or_prompt hapsearch-github-token "GitHub token (input hidden)" 1
-
 grant_secret() {
   gcloud secrets add-iam-policy-binding "$1" --member "serviceAccount:$2" \
     --role roles/secretmanager.secretAccessor --project "${PROJECT_ID}" --quiet > /dev/null
@@ -141,7 +132,6 @@ grant_secret() {
 for secret in hapsearch-secret-key hapsearch-orcid-client-id hapsearch-orcid-client-secret; do
   grant_secret "${secret}" "${RUNTIME_SA}"
 done
-grant_secret hapsearch-github-token "${BUILD_SA}"
 echo "Secret access granted"
 
 step "First allowlisted user (optional)"
@@ -172,10 +162,16 @@ cat <<NEXT
 
 Setup complete. Remaining steps (console):
 
-1. Cloud Build -> Triggers -> Connect repository: GitHub, Breeding-Insight/HapSearch.
-2. Create trigger:
+1. Cloud Build -> Repositories -> 2nd gen -> Create host connection:
+     Provider GitHub, region ${REGION}, name "github". Install the
+     "Google Cloud Build" GitHub App on Breeding-Insight (an org owner may need
+     to approve it) with access to HapSearch and alfalfa_haplotype_db.
+   Then Link repositories: Breeding-Insight/HapSearch and
+     Breeding-Insight/alfalfa_haplotype_db (keep the suggested names,
+     e.g. Breeding-Insight-alfalfa_haplotype_db).
+2. Cloud Build -> Triggers -> Create trigger (region ${REGION}):
      Event: Manual invocation
-     Source: Breeding-Insight/HapSearch, branch feature-MSA
+     Source: 2nd gen, repository Breeding-Insight-HapSearch, branch feature-MSA
      Configuration: Cloud Build configuration file, cloudbuild.yaml
      Service account: ${BUILD_SA}
    Then Run it. The first run creates the service at

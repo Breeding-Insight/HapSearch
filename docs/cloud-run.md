@@ -21,14 +21,20 @@ stored image and Firestore storage.
    It is safe to re-run. It creates the Artifact Registry repository (keeping the
    last 5 images), the `hapsearch-db` Firestore database, the app and Cloud Build
    service accounts with only the roles below, and the secrets. It copies the
-   shared ORCID credentials from AlloMate's or HapApp's secrets when present, asks
-   for a read-only GitHub token for the data repository, and can add the first
-   allowlisted user.
-2. **Connect GitHub and create the trigger** in Cloud Build (the script prints the
-   exact settings): manual invocation, `Breeding-Insight/HapSearch`, `cloudbuild.yaml`,
-   branch `feature-MSA`, service account `hapsearch-cloud-build`.
-3. **Run the trigger.** The first run creates the service, fully configured.
-4. **Add the ORCID redirect URI** `https://hapsearch-PROJECT_NUMBER.us-west1.run.app/auth/callback`
+   shared ORCID credentials from AlloMate's or HapApp's secrets when present, and
+   can add the first allowlisted user.
+2. **Connect GitHub to Cloud Build** (Repositories → 2nd gen, region `us-west1`,
+   connection name `github`). This installs the "Google Cloud Build" GitHub App on
+   Breeding-Insight; an org owner may need to approve it. Link both
+   `Breeding-Insight/HapSearch` and `Breeding-Insight/alfalfa_haplotype_db`. Builds
+   read the data repository through this connection with short-lived read-only
+   tokens, so no personal GitHub token is stored and nothing expires.
+3. **Create the trigger** (the script prints the exact settings): manual invocation,
+   repository `Breeding-Insight-HapSearch`, branch `feature-MSA`, `cloudbuild.yaml`,
+   service account `hapsearch-cloud-build`. If the data repository's link name is not
+   `Breeding-Insight-alfalfa_haplotype_db`, set `_DATA_REPO_LINK` on the trigger.
+4. **Run the trigger.** The first run creates the service, fully configured.
+5. **Add the ORCID redirect URI** `https://hapsearch-PROJECT_NUMBER.us-west1.run.app/auth/callback`
    to the shared BI ORCID application, then open `/health` and sign in.
 
 ## How the data gets into the image
@@ -117,9 +123,10 @@ stops with a clear message if the database name or IAM role is wrong.
 - `roles/secretmanager.secretAccessor` on the session key and ORCID secrets
 
 and `hapsearch-cloud-build`, the trigger's identity, with `roles/run.admin`,
-`roles/artifactregistry.writer`, `roles/logging.logWriter`, permission to deploy as
-`hapsearch-cloud-run`, and access to the `hapsearch-github-token` secret only. No JSON
-keys are created.
+`roles/artifactregistry.writer`, `roles/logging.logWriter`,
+`roles/cloudbuild.readTokenAccessor` (read-only tokens for linked repositories), and
+permission to deploy as `hapsearch-cloud-run`. No JSON keys or GitHub tokens are
+created.
 
 ## Service settings
 
