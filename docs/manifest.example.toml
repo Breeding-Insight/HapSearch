@@ -41,7 +41,7 @@ fasta = "/data/versions/alfalfa_allele_db_{version}.fa"
 botloci = "*.botloci"
 # A folder (every .csv/.csv.gz/.tsv inside is imported), a file, or a list.
 # Every file name's DAl... token needs a row in HapSearch_mapping.csv.
-sample_presence = "Sample_hapStatus"
+sample_presence = "sample_hapStatus"
 # Optional project-level matrix (columns are projects). {fasta} is the chosen
 # FASTA's name without extension, so the matrix always matches the FASTA
 # version; the build stops if that version has no matrix. The
