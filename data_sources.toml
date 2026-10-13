@@ -1,18 +1,22 @@
 # Which version of each species' data goes into HapSearch.
 #
 # scripts/build_database.py (and the Cloud Build trigger) fetches every source
-# below at its ref and builds them into one database. Pin ref to a tag (or a
-# commit) so a rebuild only changes the species whose ref you change; a branch
-# name such as "master" means "whatever is latest" on every build.
+# below and builds them into one database.
 #
-# To publish new data for one species: tag the data repository, change that
-# species' ref here, commit, and run the trigger. For a one-off build without
-# editing this file, set the trigger's _REFS substitution (e.g.
-# "alfalfa=master") or pass --refs locally. See docs/updating-data.md.
+# The FASTA version defines a species' data: "version" picks
+# data/versions/<db>_<version>.fa and the matching hapPA/<db>_<version>_hapPA_matrix.csv.
+# A rebuild only changes the species whose version (or ref) you change.
 #
-#   name     short label, used in --refs/_REFS and in build logs
+# To publish a new version of one species: change its "version" here, commit,
+# and run the trigger. For a one-off build without editing this file, set the
+# trigger's _VERSIONS substitution (e.g. "alfalfa=v056") or pass --versions
+# locally. See docs/updating-data.md.
+#
+#   name     short label, used in --versions/--refs and in build logs
 #   repo     GitHub repository (owner/name)
-#   ref      tag, commit or branch to build
+#   version  FASTA version to publish, e.g. "v055" (omit for the newest present)
+#   ref      git branch, tag or commit to fetch; "master" is fine because old
+#            versions stay in the repository, a tag also freezes the sample files
 #   link     the repository's name in Cloud Build's GitHub connection
 #            (Cloud Build -> Repositories -> 2nd gen)
 #   manifest optional path to the manifest inside the repository
@@ -21,5 +25,6 @@
 [[source]]
 name = "alfalfa"
 repo = "Breeding-Insight/alfalfa_haplotype_db"
-ref = "master"  # replace with a tag, e.g. "hapsearch-v055", once one exists
+version = "v055"
+ref = "master"
 link = "Breeding-Insight-alfalfa_haplotype_db"

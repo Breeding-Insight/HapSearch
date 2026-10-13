@@ -6,10 +6,12 @@ repository, currently
 Nobody edits the database directly. To add or change data, you change files in that
 repository, then publish a new build.
 
-Which version of each repository is built is set in
+The FASTA version defines a species' data. Which version is published is set in
 [data_sources.toml](../data_sources.toml) in this repository: one `[[source]]` per
-species, each with a `ref` (a tag, commit or branch). Pinning each species to a tag
-means a rebuild only changes the species whose `ref` you change.
+species, e.g. `version = "v055"`. That selects `data/versions/alfalfa_allele_db_v055.fa`
+and the matching `hapPA/alfalfa_allele_db_v055_hapPA_matrix.csv`. A rebuild only
+changes the species whose version you change, so new FASTA versions can be committed
+to the data repository (v056, v057, ...) without affecting HapSearch until you pin one.
 
 ## Where the inputs live
 
@@ -48,43 +50,39 @@ is written once. Every update below is just adding or replacing files.
 |---|---|
 | New genotyping order | Add its `*_hapStatus.csv` to `Sample_hapStatus/`, add a row for its `DAl...` number to `HapSearch_mapping.csv`, and add the owner to `HapSearch_owner_contacts.csv` if they are new. |
 | Re-called genotyping order | Replace the file in `Sample_hapStatus/`. If the new file has a different name, delete the old one, or both are imported. |
-| New FASTA version | Commit the new FASTA and its matrix as `hapPA/<fasta name>_hapPA_matrix.csv`. The build uses the highest FASTA version and that version's matrix, and stops if the matrix is missing. |
+| New FASTA version | Commit the FASTA to `data/versions/` and its matrix as `hapPA/<fasta name>_hapPA_matrix.csv`. Nothing changes in HapSearch until you publish that version (below); the build stops if the version's matrix is missing. |
 | Mapping or contact changes | Edit `HapSearch_mapping.csv` or `HapSearch_owner_contacts.csv`; keep the file names. |
 | New probe design | Replace the `.botloci` file. Keep only one; with two, the build stops and asks which. |
-| Roll back to an older FASTA | Write that FASTA's exact file name as `fasta` in the manifest; the matrix follows it. |
+| Roll back to an older FASTA | Set the older `version` in `data_sources.toml` and publish; its matrix follows. |
 
 The build log (and the database's `build_info` table) lists which FASTA, matrix and
 other files were used, so you can always confirm what was picked.
 
-Commit the change, then tag the commit so the build can be pinned to it, for example:
-
-```bash
-git tag hapsearch-v055
-git push origin master --tags
-```
+Sample files, mapping and contacts are not versioned per FASTA, so HapSearch uses the
+latest committed ones (or those at a tag, if `ref` in `data_sources.toml` is a tag).
+The allele check catches sample files that do not match the pinned FASTA.
 
 ## Publish
 
-1. **Point HapSearch at the new version.** In this repository, set that species'
-   `ref` in `data_sources.toml` to the tag you pushed, commit, and push to the branch
-   the trigger builds (`feature-MSA`). Other species keep their pinned refs, so their
-   data does not change. If a species' `ref` is a branch such as `master`, skip this
-   step: every build takes that branch's latest commit.
+1. **New FASTA version only:** in this repository, set that species' `version` in
+   `data_sources.toml` (e.g. `"v056"`), commit, and push to the branch the trigger
+   builds (`feature-MSA`). Other species keep their pinned versions. For sample,
+   mapping or contact updates at the same version, skip this step.
 2. In the Google Cloud console, open **Cloud Build → Triggers** and click **Run** on
    `hapsearch-publish`.
-3. Leave `_REFS` empty to build exactly what `data_sources.toml` pins, then click
-   **Run trigger**.
+3. Leave `_VERSIONS` and `_REFS` empty to build exactly what `data_sources.toml` pins,
+   then click **Run trigger**.
 
-To try a version without committing a pin, set `_REFS` for that run only, e.g.
-`alfalfa=master` or `alfalfa=hapsearch-v056`; separate several with commas. Commit the
-pin in `data_sources.toml` once you are happy with the result, or the next normal run
-goes back to the pinned version.
+To try a version without committing the pin, set `_VERSIONS` for that run only, e.g.
+`alfalfa=v056` (separate several species with commas). Commit the pin once you are
+happy with it, or the next normal run goes back to the pinned version. `_REFS` does
+the same for the git branch, tag or commit that is fetched.
 
 The pipeline ([cloudbuild.yaml](../cloudbuild.yaml)) fetches every source at its ref,
 builds and checks the database, builds the app image and deploys it. If anything fails,
 nothing is deployed and the build log shows why. A successful run takes roughly 10
 minutes; the new version is live as soon as it finishes. The Cloud Run revision records
-the exact data in `HAPSEARCH_DATA_VERSION` (e.g. `alfalfa=hapsearch-v055@1a2b3c4d5e6f`),
+the exact data in `HAPSEARCH_DATA_VERSION` (e.g. `alfalfa=v055/master@1a2b3c4d5e6f`),
 and the database's `build_info` table lists every source, its commit and the files used.
 
 ## Check a build on your computer (optional)
@@ -92,8 +90,8 @@ and the database's `build_info` table lists every source, its commit and the fil
 From the HapSearch app repository:
 
 ```bash
-python scripts/build_database.py                          # the pinned refs
-python scripts/build_database.py --refs alfalfa=master    # try another ref
+python scripts/build_database.py                            # the pinned versions
+python scripts/build_database.py --versions alfalfa=v056    # try another version
 python scripts/build_database.py --data-repo ../alfalfa_haplotype_db   # a local checkout
 ```
 
@@ -117,11 +115,11 @@ previous revision and **Manage traffic → 100%**. Fix the data, then publish ag
 ## Adding a species
 
 1. Give its data repository a `data/hapSearch/manifest.toml` (see
-   [manifest.example.toml](manifest.example.toml)) and tag a version.
+   [manifest.example.toml](manifest.example.toml)) using `{version}` in its FASTA path.
 2. Link the repository to the `github` connection (Cloud Build → Repositories →
    2nd gen) and note its link name.
-3. Add a `[[source]]` to `data_sources.toml` with its `name`, `repo`, `ref` and
-   `link`, then publish as above. Species names and sample codes must not clash with
+3. Add a `[[source]]` to `data_sources.toml` with its `name`, `repo`, `version`,
+   `ref` and `link`, then publish as above. Species names and sample codes must not clash with
    another species.
 - The Cloud Run service, Firestore database and service identity described in
   [cloud-run.md](cloud-run.md).

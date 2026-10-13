@@ -6,13 +6,12 @@
 # docs/updating-data.md there.
 #
 # Written once: with the patterns below, adding or replacing files is enough
-# and this file does not need editing.
+# and this file does not need editing. Which FASTA version is published is set
+# in HapSearch's data_sources.toml, not here.
 #
 # Paths are relative to this file's folder. A path starting with "/" is
 # relative to the repository root (used here for the FASTA in data/versions/). Wildcards (*)
-# are allowed: the FASTA pattern picks the highest version, and any other
-# single-file pattern must match exactly one file. To pin a version (e.g. to
-# roll back), write the exact file name instead. Matrices may be gzipped
+# are allowed in other paths; a single-file pattern must match exactly one file. Matrices may be gzipped
 # (.csv.gz); gzip anything over ~50 MB, since GitHub rejects files over 100 MB.
 #
 # Expected layout of data/hapSearch/:
@@ -33,8 +32,11 @@ owner_contacts = "HapSearch_owner_contacts.csv"
 [[species]]
 name = "Medicago sativa"
 common_name = "Alfalfa"
-# The allele database. The highest version matching the pattern is used.
-fasta = "/data/versions/alfalfa_allele_db_v*.fa"
+# The allele database; its version defines the data version. {version} is
+# filled in from "version" in HapSearch's data_sources.toml (e.g. v055), or the
+# newest version present when none is pinned. It only matches a version token,
+# so files like alfalfa_allele_db_v016_81bp.fa are never picked.
+fasta = "/data/versions/alfalfa_allele_db_{version}.fa"
 # Optional: bottom-strand marker IDs, one per line. Keep a single .botloci file.
 botloci = "*.botloci"
 # A folder (every .csv/.csv.gz/.tsv inside is imported), a file, or a list.

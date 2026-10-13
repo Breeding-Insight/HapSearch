@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Build the HapSearch SQLite database from the species data repositories.
 
-``data_sources.toml`` (in this repository) lists each species' data repository
-and the tag, commit or branch to build from. Every build starts from an empty
+``data_sources.toml`` (in this repository) lists each species' data repository,
+the FASTA version to publish (e.g. v055, which also selects the matching
+project matrix) and the git tag, commit or branch to fetch. Every build starts from an empty
 database, fetches each source at its pinned ref, runs every import, optimizes
 the file, checks the result and compares it with the previous build. The output
 file is only replaced when every check passes. Pinning means a rebuild only
 changes the species whose ref you changed.
 
     python scripts/build_database.py                         # pinned refs
-    python scripts/build_database.py --refs alfalfa=master   # one-off override
+    python scripts/build_database.py --versions alfalfa=v056  # one-off version
+    python scripts/build_database.py --refs alfalfa=master   # one-off git ref
     python scripts/build_database.py --data-repo ../alfalfa_haplotype_db  # local checkout
 
 Each data repository describes its inputs in a ``manifest.toml``, normally
@@ -257,7 +259,61 @@ def _expand_presence(spec, data_repo: str, base_dir: str, label: str, fasta: str
     return files
 
 
-def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None) -> BuildPlan:
+_VERSION_TOKEN = "{version}"
+
+
+def resolve_fasta(spec, data_repo: str, base_dir: str, cache_dir: str,
+                  plan_sources: Dict[str, str], label: str,
+                  version: Optional[str] = None) -> str:
+    """Pick the FASTA, which defines the data version.
+
+    With ``{version}`` in the manifest path (e.g. alfalfa_allele_db_{version}.fa),
+    a pinned version such as "v055" selects that file; without a pin the highest
+    version present is used. ``{version}`` only matches a version token like
+    v055, so files such as alfalfa_allele_db_v016_81bp.fa never qualify.
+    """
+    if not (isinstance(spec, str) and _VERSION_TOKEN in spec):
+        if version:
+            raise BuildError(
+                f"{label}: version {version} is pinned, but the manifest's fasta path has "
+                f"no {_VERSION_TOKEN} placeholder (e.g. alfalfa_allele_db_{_VERSION_TOKEN}.fa)"
+            )
+        return _resolve_source(spec, data_repo, base_dir, cache_dir, plan_sources, label,
+                               pick_newest=True)
+
+    pattern_path = _local_path(data_repo, base_dir, spec)
+    directory, name_pattern = os.path.split(pattern_path)
+    before, _, after = name_pattern.partition(_VERSION_TOKEN)
+    name_re = re.compile(re.escape(before) + r"(v?\d+)" + re.escape(after) + "$")
+    available = {}
+    if os.path.isdir(directory):
+        for name in os.listdir(directory):
+            match = name_re.match(name)
+            if match and os.path.isfile(os.path.join(directory, name)):
+                available[match.group(1)] = os.path.join(directory, name)
+    if not available:
+        raise BuildError(f"{label}: no files match {spec} in the data repository")
+    if version:
+        if version not in available:
+            listing = ", ".join(sorted(available, key=_version_number)[-5:])
+            raise BuildError(
+                f"{label}: version {version} not found for {spec} "
+                f"(latest available: {listing})"
+            )
+        chosen = version
+    else:
+        chosen = max(available, key=_version_number)
+    path = available[chosen]
+    plan_sources[label] = os.path.relpath(path, data_repo)
+    return path
+
+
+def _version_number(version: str) -> int:
+    return int(re.sub(r"\D", "", version) or 0)
+
+
+def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None,
+              version: Optional[str] = None) -> BuildPlan:
     manifest_path = find_manifest(data_repo, manifest)
     base_dir = os.path.dirname(manifest_path)
     with open(manifest_path, "rb") as handle:
@@ -274,8 +330,8 @@ def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None) ->
         name = entry.get("name")
         if not name or "fasta" not in entry:
             raise BuildError("manifest.toml: every [[species]] needs name and fasta")
-        fasta = _resolve_source(entry["fasta"], data_repo, base_dir, cache_dir, sources,
-                                f"{name} FASTA", pick_newest=True)
+        fasta = resolve_fasta(entry["fasta"], data_repo, base_dir, cache_dir, sources,
+                              f"{name} FASTA", version)
         species.append(SpeciesInputs(
             name=name,
             common_name=entry.get("common_name"),
@@ -448,6 +504,7 @@ def write_build_info(db_path: str, builds: List[Tuple["DataSource", BuildPlan]])
             "name": source.name,
             "repo": source.repo or source.path,
             "ref": source.ref,
+            "version": source.version,
             "commit": source.commit,
             "manifest_sha256": manifest_sha,
             "files": plan.sources,
@@ -479,20 +536,25 @@ class DataSource:
     link: Optional[str] = None
     commit: Optional[str] = None
     manifest: Optional[str] = None
+    version: Optional[str] = None  # FASTA version, e.g. "v055"; None = newest
 
 
 def data_version(sources: List[DataSource]) -> str:
-    """Short description of every source, e.g. 'alfalfa=v55@1a2b3c4d5e6f'."""
+    """Short description of every source, e.g. 'alfalfa=v055/master@1a2b3c4d5e6f'."""
     parts = []
     for source in sources:
-        commit = (source.commit or "")[:12]
-        parts.append(f"{source.name}={source.ref or 'local'}@{commit}" if commit
-                     else f"{source.name}={source.ref or 'local'}")
+        where = source.ref or "local"
+        if source.commit:
+            where += f"@{source.commit[:12]}"
+        parts.append(f"{source.name}={source.version or 'newest'}/{where}")
     return " ".join(parts)
 
 
 def parse_ref_overrides(values: List[str]) -> Dict[str, str]:
-    """Parse 'alfalfa=master,blueberry=v2' (repeatable) into {name: ref}."""
+    """Parse 'alfalfa=master,blueberry=v2' (repeatable) into {name: value}.
+
+    Used for both --refs and --versions.
+    """
     overrides: Dict[str, str] = {}
     for value in values or []:
         for item in value.split(","):
@@ -506,8 +568,10 @@ def parse_ref_overrides(values: List[str]) -> Dict[str, str]:
     return overrides
 
 
-def load_data_sources(path: str, overrides: Dict[str, str]) -> List[DataSource]:
-    """Read data_sources.toml and apply one-off ref overrides."""
+def load_data_sources(path: str, overrides: Dict[str, str],
+                      version_overrides: Optional[Dict[str, str]] = None) -> List[DataSource]:
+    """Read data_sources.toml and apply one-off ref and version overrides."""
+    version_overrides = version_overrides or {}
     if not os.path.isfile(path):
         raise BuildError(f"Data sources file not found: {path}")
     with open(path, "rb") as handle:
@@ -524,6 +588,7 @@ def load_data_sources(path: str, overrides: Dict[str, str]) -> List[DataSource]:
             ref=entry["ref"],
             link=entry.get("link"),
             manifest=entry.get("manifest"),
+            version=entry.get("version"),
         ))
     if not sources:
         raise BuildError(f"{os.path.basename(path)}: add at least one [[source]]")
@@ -531,13 +596,14 @@ def load_data_sources(path: str, overrides: Dict[str, str]) -> List[DataSource]:
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
         raise BuildError(f"{os.path.basename(path)}: duplicate source names: {', '.join(duplicates)}")
-    unknown = sorted(set(overrides) - set(names))
+    unknown = sorted((set(overrides) | set(version_overrides)) - set(names))
     if unknown:
         raise BuildError(
             f"Unknown source(s) in overrides: {', '.join(unknown)} (known: {', '.join(names)})"
         )
     for source in sources:
         source.ref = overrides.get(source.name, source.ref)
+        source.version = version_overrides.get(source.name, source.version)
     return sources
 
 
@@ -638,7 +704,8 @@ def _build(sources: List[DataSource], output: str, compare_to: Optional[str], ca
         for source in sources:
             if not source.path:
                 checkout_source(source, cache_dir)
-            builds.append((source, load_plan(source.path, cache_dir, source.manifest)))
+            builds.append((source, load_plan(source.path, cache_dir, source.manifest,
+                                             source.version)))
     except BuildError as exc:
         _log(f"Error: {exc}")
         return False
@@ -688,8 +755,9 @@ def _build(sources: List[DataSource], output: str, compare_to: Optional[str], ca
     size_mb = os.path.getsize(output) / 1024 / 1024
     _log(f"\nBuilt {output} ({size_mb:.1f} MB)")
     for source, plan in builds:
-        _log(f"  {source.name}: {source.repo or source.path} "
-             f"ref {source.ref or '-'} commit {(source.commit or 'unknown')[:12]}")
+        _log(f"  {source.name}: version {source.version or 'newest'}, "
+             f"{source.repo or source.path} ref {source.ref or '-'} "
+             f"commit {(source.commit or 'unknown')[:12]}")
         for label, value in plan.sources.items():
             _log(f"    {label}: {value}")
     if version_file:
@@ -712,6 +780,12 @@ def main() -> None:
         default=[],
         help="Override refs for this build only, e.g. alfalfa=master (comma-separated "
              "or repeated)",
+    )
+    parser.add_argument(
+        "--versions",
+        action="append",
+        default=[],
+        help="Override FASTA versions for this build only, e.g. alfalfa=v056",
     )
     parser.add_argument(
         "--data-repo",
@@ -744,14 +818,20 @@ def main() -> None:
         if args.data_repo:
             if args.refs:
                 raise BuildError("--refs applies to --sources, not --data-repo")
+            versions = parse_ref_overrides(args.versions)
+            if versions and len(args.data_repo) > 1:
+                raise BuildError("With several --data-repo, pin versions in data_sources.toml")
             if args.manifest and len(args.data_repo) > 1:
                 raise BuildError("--manifest can only be used with a single --data-repo")
             sources = [local_source(path, args.manifest) for path in args.data_repo]
+            if versions:
+                sources[0].version = next(iter(versions.values()))
             for source in sources:
                 if not os.path.isdir(source.path):
                     raise BuildError(f"Data repository not found at {source.path}")
         else:
-            sources = load_data_sources(args.sources, parse_ref_overrides(args.refs))
+            sources = load_data_sources(args.sources, parse_ref_overrides(args.refs),
+                                        parse_ref_overrides(args.versions))
     except BuildError as exc:
         print(f"Error: {exc}", flush=True)
         sys.exit(1)

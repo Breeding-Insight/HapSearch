@@ -174,7 +174,7 @@ Setup complete. Remaining steps (console):
      Event: Manual invocation
      Source: 2nd gen, repository Breeding-Insight-HapSearch, branch feature-MSA
      Configuration: Cloud Build configuration file, cloudbuild.yaml
-     Substitution (optional): _REFS, empty = the refs in data_sources.toml
+     Substitutions (optional): _VERSIONS and _REFS, empty = data_sources.toml
      Service account: ${BUILD_SA}
    Then Run it. The first run creates the service at
      ${SERVICE_URL}

@@ -1,7 +1,8 @@
-# Builds the HapSearch database from the species data repositories pinned in
-# data_sources.toml, then builds and deploys the app. Run it manually from the
-# Cloud Build trigger. To build one species at a different ref without editing
-# data_sources.toml, set _REFS (e.g. "alfalfa=master"). See docs/updating-data.md.
+# Builds the HapSearch database from the species data repositories and FASTA
+# versions pinned in data_sources.toml, then builds and deploys the app. Run it
+# manually from the Cloud Build trigger. To build one species at another
+# version without editing data_sources.toml, set _VERSIONS (e.g.
+# "alfalfa=v056"); _REFS does the same for the git ref. See docs/updating-data.md.
 #
 # Everything it needs (secrets, service accounts, Firestore, Artifact Registry)
 # is created once by scripts/setup_cloud_run.sh; see docs/cloud-run.md.
@@ -14,8 +15,9 @@ substitutions:
   _REGION: us-west1
   _REPOSITORY: hapsearch
   _SERVICE: hapsearch
-  # One-off ref overrides, e.g. "alfalfa=master,blueberry=v2"; empty uses the
-  # refs pinned in data_sources.toml.
+  # One-off overrides, e.g. "alfalfa=v056" / "alfalfa=master"; empty uses
+  # what data_sources.toml pins. Separate several species with commas.
+  _VERSIONS: ""
   _REFS: ""
   # Cloud Build 2nd-gen GitHub connection holding the linked data repositories.
   _GITHUB_CONNECTION: github
@@ -42,6 +44,7 @@ steps:
         pip install --quiet --root-user-action=ignore -r requirements.txt
         python -W ignore scripts/build_database.py \
           --sources data_sources.toml \
+          --versions "${_VERSIONS}" \
           --refs "${_REFS}" \
           --cache-dir /builder/home/build-cache \
           --version-file /builder/home/data_version.txt \
@@ -63,7 +66,8 @@ steps:
 
   # Every service setting lives here, so the first run creates a fully
   # configured service and later runs keep it that way. The data versions
-  # (source=ref@commit) are recorded on the revision as HAPSEARCH_DATA_VERSION.
+  # (source=version/ref@commit) are recorded on the revision as
+  # HAPSEARCH_DATA_VERSION.
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash

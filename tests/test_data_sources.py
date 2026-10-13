@@ -55,6 +55,20 @@ class DataSourcesTests(unittest.TestCase):
         self.assertEqual([(s.name, s.ref) for s in sources],
                          [("alfalfa", "hapsearch-v055"), ("blueberry", "master")])
 
+    def test_versions_are_pinned_and_overridable(self):
+        with open(self.sources_path, "w", encoding="utf-8") as handle:
+            handle.write(SOURCES.replace('ref = "hapsearch-v055"', 'version = "v055"\nref = "master"'))
+
+        pinned = load_data_sources(self.sources_path, {})
+        overridden = load_data_sources(self.sources_path, {}, {"alfalfa": "v056"})
+
+        self.assertEqual(pinned[0].version, "v055")
+        self.assertIsNone(pinned[1].version)
+        self.assertEqual(overridden[0].version, "v056")
+        self.assertEqual(overridden[0].ref, "master")
+        with self.assertRaisesRegex(BuildError, "Unknown source.*cranberry"):
+            load_data_sources(self.sources_path, {}, {"cranberry": "v001"})
+
     def test_overrides_parse_commas_repeats_and_blanks(self):
         self.assertEqual(
             parse_ref_overrides(["alfalfa=master, blueberry=v3", "", "alfalfa=v056"]),
@@ -103,7 +117,7 @@ class DataSourcesTests(unittest.TestCase):
         with open(os.path.join(latest.path, "version.txt"), encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "v056 work in progress\n")
         self.assertNotEqual(pinned.commit, latest.commit)
-        self.assertEqual(data_version([latest]), f"alfalfa=master@{latest.commit[:12]}")
+        self.assertEqual(data_version([latest]), f"alfalfa=newest/master@{latest.commit[:12]}")
 
     def test_missing_ref_fails_clearly(self):
         origin = os.path.join(self.dir, "origin")

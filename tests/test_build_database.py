@@ -160,5 +160,62 @@ class PatternManifestTests(BuildPlanTests):
         self.assertEqual(fasta_stem("/x/alfalfa_allele_db_v055.fa.gz"), "alfalfa_allele_db_v055")
 
 
+VERSION_MANIFEST = """
+[metadata]
+project_mapping = "HapSearch_mapping.csv"
+owner_contacts = "HapSearch_owner_contacts.csv"
+
+[[species]]
+name = "Medicago sativa"
+fasta = "/db/alfalfa_allele_db_{version}.fa"
+project_presence = "hapPA/{fasta}_hapPA_matrix.csv"
+"""
+
+
+class VersionPinTests(PatternManifestTests):
+    """The FASTA version (e.g. v055) selects the FASTA and its matrix."""
+
+    def setUp(self):
+        super().setUp()
+        # Look-alike files that must never be picked as a version.
+        for name in ("alfalfa_allele_db_v016_81bp.fa", "alfalfa_allele_db_v042_ActualAmpliconSeq.fa",
+                     "alfalfa_allele_db_v100.fa.self.bn"):
+            self._touch(os.path.join(self.repo, "db", name))
+        self._write_manifest(VERSION_MANIFEST)
+
+    def _plan(self, version=None):
+        return load_plan(self.repo, os.path.join(self.repo, ".cache"), version=version)
+
+    # Inherited pattern tests use a different manifest.
+    test_newest_fasta_and_its_matrix_are_chosen = None
+    test_newest_fasta_without_matrix_stops_the_build = None
+    test_pinned_fasta_selects_matching_matrix = None
+    test_ambiguous_single_file_pattern_stops_the_build = None
+
+    def test_pinned_version_selects_fasta_and_matrix(self):
+        species = self._plan("v054").species[0]
+
+        self.assertEqual(os.path.basename(species.fasta), "alfalfa_allele_db_v054.fa")
+        self.assertEqual(
+            [os.path.basename(path) for path in species.project_presence],
+            ["alfalfa_allele_db_v054_hapPA_matrix.csv"],
+        )
+
+    def test_unpinned_uses_newest_real_version(self):
+        species = self._plan().species[0]
+
+        self.assertEqual(os.path.basename(species.fasta), "alfalfa_allele_db_v100.fa")
+
+    def test_missing_version_lists_what_exists(self):
+        with self.assertRaisesRegex(BuildError, "version v056 not found.*v100"):
+            self._plan("v056")
+
+    def test_version_needs_placeholder_in_manifest(self):
+        self._write_manifest(VERSION_MANIFEST.replace("{version}", "v054"))
+
+        with self.assertRaisesRegex(BuildError, "no \\{version\\} placeholder"):
+            self._plan("v054")
+
+
 if __name__ == "__main__":
     unittest.main()
