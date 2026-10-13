@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""Build the HapSearch SQLite database from a data repository.
+"""Build the HapSearch SQLite database from the species data repositories.
 
-Everything the database contains is described by a ``manifest.toml`` in the
-data repository, normally ``data/hapSearch/manifest.toml`` (or ``{species}/data/hapSearch/``) next to the
-HapSearch inputs (see docs/updating-data.md). The build always starts from an empty
-database, runs every import in order, optimizes the file, checks the result and
-compares it with the previous build. The output file is only replaced when every
-check passes, so a failed build never leaves a half-built database behind.
+``data_sources.toml`` (in this repository) lists each species' data repository,
+the FASTA version to publish (e.g. v055, which also selects the matching
+project matrix) and the git tag, commit or branch to fetch. Every build starts from an empty
+database, fetches each source at its pinned ref, runs every import, optimizes
+the file, checks the result and compares it with the previous build. The output
+file is only replaced when every check passes. Pinning means a rebuild only
+changes the species whose ref you changed.
 
-    python scripts/build_database.py --data-repo ../alfalfa_haplotype_db
+    python scripts/build_database.py                         # pinned refs
+    python scripts/build_database.py --versions alfalfa=v056  # one-off version
+    python scripts/build_database.py --refs alfalfa=master   # one-off git ref
+    python scripts/build_database.py --data-repo ../alfalfa_haplotype_db  # local checkout
 
-Paths in the manifest are relative to the manifest's folder; a path starting
-with "/" is relative to the data repository root. Paths may use wildcards
-(``*``): a FASTA pattern selects the highest version, every other single-file
-pattern must match exactly one file, and ``{fasta}`` in a presence path stands
-for the chosen FASTA's name without its extension. A source can also come from
-another GitHub repository at a pinned tag or commit, using your git credentials
-locally or a token in GITHUB_TOKEN. (Cloud Build only clones the data
-repository, so in Cloud Build keep every input there.)
+Each data repository describes its inputs in a ``manifest.toml``, normally
+``data/hapSearch/manifest.toml``. Paths in the manifest are relative to its
+folder; a path starting with "/" is relative to the repository root. Paths may
+use wildcards (``*``): a FASTA pattern selects the highest version, every other
+single-file pattern must match exactly one file, and ``{fasta}`` in a presence
+path stands for the chosen FASTA's name without its extension.
+
+Fetching uses your git credentials locally, GITHUB_TOKEN if set, or in Cloud
+Build a read token from the GitHub connection (HAPSEARCH_BUILD_CONNECTION plus
+each source's ``link``).
 """
 
 import argparse
@@ -253,7 +259,61 @@ def _expand_presence(spec, data_repo: str, base_dir: str, label: str, fasta: str
     return files
 
 
-def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None) -> BuildPlan:
+_VERSION_TOKEN = "{version}"
+
+
+def resolve_fasta(spec, data_repo: str, base_dir: str, cache_dir: str,
+                  plan_sources: Dict[str, str], label: str,
+                  version: Optional[str] = None) -> str:
+    """Pick the FASTA, which defines the data version.
+
+    With ``{version}`` in the manifest path (e.g. alfalfa_allele_db_{version}.fa),
+    a pinned version such as "v055" selects that file; without a pin the highest
+    version present is used. ``{version}`` only matches a version token like
+    v055, so files such as alfalfa_allele_db_v016_81bp.fa never qualify.
+    """
+    if not (isinstance(spec, str) and _VERSION_TOKEN in spec):
+        if version:
+            raise BuildError(
+                f"{label}: version {version} is pinned, but the manifest's fasta path has "
+                f"no {_VERSION_TOKEN} placeholder (e.g. alfalfa_allele_db_{_VERSION_TOKEN}.fa)"
+            )
+        return _resolve_source(spec, data_repo, base_dir, cache_dir, plan_sources, label,
+                               pick_newest=True)
+
+    pattern_path = _local_path(data_repo, base_dir, spec)
+    directory, name_pattern = os.path.split(pattern_path)
+    before, _, after = name_pattern.partition(_VERSION_TOKEN)
+    name_re = re.compile(re.escape(before) + r"(v?\d+)" + re.escape(after) + "$")
+    available = {}
+    if os.path.isdir(directory):
+        for name in os.listdir(directory):
+            match = name_re.match(name)
+            if match and os.path.isfile(os.path.join(directory, name)):
+                available[match.group(1)] = os.path.join(directory, name)
+    if not available:
+        raise BuildError(f"{label}: no files match {spec} in the data repository")
+    if version:
+        if version not in available:
+            listing = ", ".join(sorted(available, key=_version_number)[-5:])
+            raise BuildError(
+                f"{label}: version {version} not found for {spec} "
+                f"(latest available: {listing})"
+            )
+        chosen = version
+    else:
+        chosen = max(available, key=_version_number)
+    path = available[chosen]
+    plan_sources[label] = os.path.relpath(path, data_repo)
+    return path
+
+
+def _version_number(version: str) -> int:
+    return int(re.sub(r"\D", "", version) or 0)
+
+
+def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None,
+              version: Optional[str] = None) -> BuildPlan:
     manifest_path = find_manifest(data_repo, manifest)
     base_dir = os.path.dirname(manifest_path)
     with open(manifest_path, "rb") as handle:
@@ -270,8 +330,8 @@ def load_plan(data_repo: str, cache_dir: str, manifest: Optional[str] = None) ->
         name = entry.get("name")
         if not name or "fasta" not in entry:
             raise BuildError("manifest.toml: every [[species]] needs name and fasta")
-        fasta = _resolve_source(entry["fasta"], data_repo, base_dir, cache_dir, sources,
-                                f"{name} FASTA", pick_newest=True)
+        fasta = resolve_fasta(entry["fasta"], data_repo, base_dir, cache_dir, sources,
+                              f"{name} FASTA", version)
         species.append(SpeciesInputs(
             name=name,
             common_name=entry.get("common_name"),
@@ -434,19 +494,25 @@ def table_counts(db_path: str) -> Dict[str, int]:
         conn.close()
 
 
-def write_build_info(db_path: str, plan: BuildPlan, data_repo: str) -> Dict[str, str]:
+def write_build_info(db_path: str, builds: List[Tuple["DataSource", BuildPlan]]) -> Dict[str, str]:
     """Record what went into this database so the live version can be traced."""
-    with open(plan.manifest_path, "rb") as handle:
-        manifest_sha = hashlib.sha256(handle.read()).hexdigest()
-    try:
-        data_commit = _git(["rev-parse", "HEAD"], data_repo, None)
-    except BuildError:
-        data_commit = "unknown (not a git checkout)"
+    data_sources = []
+    for source, plan in builds:
+        with open(plan.manifest_path, "rb") as handle:
+            manifest_sha = hashlib.sha256(handle.read()).hexdigest()
+        data_sources.append({
+            "name": source.name,
+            "repo": source.repo or source.path,
+            "ref": source.ref,
+            "version": source.version,
+            "commit": source.commit,
+            "manifest_sha256": manifest_sha,
+            "files": plan.sources,
+        })
     info = {
         "built_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-        "data_repo_commit": data_commit,
-        "manifest_sha256": manifest_sha,
-        "sources": json.dumps(plan.sources, sort_keys=True),
+        "data_sources": json.dumps(data_sources, sort_keys=True),
+        "data_version": data_version([source for source, _ in builds]),
     }
     conn = sqlite3.connect(db_path)
     try:
@@ -458,35 +524,209 @@ def write_build_info(db_path: str, plan: BuildPlan, data_repo: str) -> Dict[str,
     return info
 
 
-def build(data_repo: str, output: str, compare_to: Optional[str], cache_dir: str,
-          manifest: Optional[str] = None) -> bool:
+# --- Data sources ---------------------------------------------------------
+
+@dataclass
+class DataSource:
+    """One data repository: a local checkout, plus where it came from."""
+    name: str
+    path: str
+    repo: Optional[str] = None
+    ref: Optional[str] = None
+    link: Optional[str] = None
+    commit: Optional[str] = None
+    manifest: Optional[str] = None
+    version: Optional[str] = None  # FASTA version, e.g. "v055"; None = newest
+
+
+def data_version(sources: List[DataSource]) -> str:
+    """Short description of every source, e.g. 'alfalfa=v055/master@1a2b3c4d5e6f'."""
+    parts = []
+    for source in sources:
+        where = source.ref or "local"
+        if source.commit:
+            where += f"@{source.commit[:12]}"
+        parts.append(f"{source.name}={source.version or 'newest'}/{where}")
+    return " ".join(parts)
+
+
+def parse_ref_overrides(values: List[str]) -> Dict[str, str]:
+    """Parse 'alfalfa=master,blueberry=v2' (repeatable) into {name: value}.
+
+    Used for both --refs and --versions.
+    """
+    overrides: Dict[str, str] = {}
+    for value in values or []:
+        for item in value.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            name, sep, ref = item.partition("=")
+            if not sep or not name.strip() or not ref.strip():
+                raise BuildError(f"Override '{item}' must look like name=ref")
+            overrides[name.strip()] = ref.strip()
+    return overrides
+
+
+def load_data_sources(path: str, overrides: Dict[str, str],
+                      version_overrides: Optional[Dict[str, str]] = None) -> List[DataSource]:
+    """Read data_sources.toml and apply one-off ref and version overrides."""
+    version_overrides = version_overrides or {}
+    if not os.path.isfile(path):
+        raise BuildError(f"Data sources file not found: {path}")
+    with open(path, "rb") as handle:
+        entries = tomllib.load(handle).get("source", [])
+    sources: List[DataSource] = []
+    for entry in entries:
+        missing = [key for key in ("name", "repo", "ref") if not entry.get(key)]
+        if missing:
+            raise BuildError(f"{os.path.basename(path)}: every [[source]] needs {', '.join(missing)}")
+        sources.append(DataSource(
+            name=entry["name"],
+            path="",
+            repo=entry["repo"],
+            ref=entry["ref"],
+            link=entry.get("link"),
+            manifest=entry.get("manifest"),
+            version=entry.get("version"),
+        ))
+    if not sources:
+        raise BuildError(f"{os.path.basename(path)}: add at least one [[source]]")
+    names = [source.name for source in sources]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise BuildError(f"{os.path.basename(path)}: duplicate source names: {', '.join(duplicates)}")
+    unknown = sorted((set(overrides) | set(version_overrides)) - set(names))
+    if unknown:
+        raise BuildError(
+            f"Unknown source(s) in overrides: {', '.join(unknown)} (known: {', '.join(names)})"
+        )
+    for source in sources:
+        source.ref = overrides.get(source.name, source.ref)
+        source.version = version_overrides.get(source.name, source.version)
+    return sources
+
+
+def _connection_read_token(link: str) -> str:
+    """Short-lived read token for a repository linked to Cloud Build's GitHub connection.
+
+    HAPSEARCH_BUILD_CONNECTION names the connection
+    (projects/P/locations/R/connections/C); Cloud Build sets it in cloudbuild.yaml.
+    The build's service account needs roles/cloudbuild.readTokenAccessor.
+    """
+    import urllib.request
+
+    connection = os.environ["HAPSEARCH_BUILD_CONNECTION"]
+    metadata = urllib.request.Request(
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+        headers={"Metadata-Flavor": "Google"},
+    )
+    with urllib.request.urlopen(metadata, timeout=30) as response:
+        access_token = json.load(response)["access_token"]
+    request = urllib.request.Request(
+        f"https://cloudbuild.googleapis.com/v2/{connection}/repositories/{link}:accessReadToken",
+        data=b"{}",
+        method="POST",
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)["token"]
+    except Exception as exc:
+        raise BuildError(
+            f"Could not get a read token for '{link}' from {connection}. Is the repository "
+            f"linked to the Cloud Build connection under that name? ({exc})"
+        ) from exc
+
+
+def _repo_url(repo: str) -> str:
+    # A local path or URL is used as is (handy for testing); otherwise GitHub.
+    if "://" in repo or os.path.isabs(repo):
+        return repo
+    return f"https://github.com/{repo}.git"
+
+
+def checkout_source(source: DataSource, cache_dir: str) -> DataSource:
+    """Fetch one data repository at its ref into cache_dir/sources/<name>."""
+    import shutil
+
+    if source.link and os.getenv("HAPSEARCH_BUILD_CONNECTION"):
+        token = _connection_read_token(source.link)
+    else:
+        token = os.getenv("GITHUB_TOKEN") or None
+    dest = os.path.join(cache_dir, "sources", source.name)
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    os.makedirs(dest)
+    _log(f"Fetching {source.name}: {source.repo} at {source.ref}")
+    _git(["init", "-q"], dest, token)
+    _git(["remote", "add", "origin", _repo_url(source.repo)], dest, token)
+    _git(["fetch", "-q", "--depth", "1", "origin", source.ref], dest, token)
+    _git(["checkout", "-q", "FETCH_HEAD"], dest, token)
+    source.path = dest
+    source.commit = _git(["rev-parse", "HEAD"], dest, token)
+    _log(f"  {source.name} commit {source.commit[:12]}")
+    return source
+
+
+def local_source(path: str, manifest: Optional[str] = None) -> DataSource:
+    """A data repository checkout given with --data-repo (not fetched)."""
+    path = os.path.abspath(path)
+    source = DataSource(name=os.path.basename(path.rstrip(os.sep)), path=path, manifest=manifest)
+    try:
+        source.commit = _git(["rev-parse", "HEAD"], path, None)
+        source.ref = _git(["rev-parse", "--abbrev-ref", "HEAD"], path, None)
+    except BuildError:
+        pass
+    return source
+
+
+# --- Build ----------------------------------------------------------------
+
+def build(sources: List[DataSource], output: str, compare_to: Optional[str], cache_dir: str,
+          version_file: Optional[str] = None) -> bool:
     staging = os.path.abspath(output) + ".building"
     try:
-        return _build(data_repo, output, compare_to, cache_dir, manifest)
+        return _build(sources, output, compare_to, cache_dir, version_file)
     finally:
         # A failed build must not leave a half-built file around.
         if os.path.exists(staging):
             os.remove(staging)
 
 
-def _build(data_repo: str, output: str, compare_to: Optional[str], cache_dir: str,
-           manifest: Optional[str]) -> bool:
-    data_repo = os.path.abspath(data_repo)
+def _build(sources: List[DataSource], output: str, compare_to: Optional[str], cache_dir: str,
+           version_file: Optional[str]) -> bool:
     output = os.path.abspath(output)
     staging = output + ".building"
 
+    builds: List[Tuple[DataSource, BuildPlan]] = []
     try:
-        plan = load_plan(data_repo, cache_dir, manifest)
+        for source in sources:
+            if not source.path:
+                checkout_source(source, cache_dir)
+            builds.append((source, load_plan(source.path, cache_dir, source.manifest,
+                                             source.version)))
     except BuildError as exc:
         _log(f"Error: {exc}")
         return False
 
-    _log(f"Building {output} from {plan.manifest_path}")
+    owners: Dict[str, str] = {}
+    for source, plan in builds:
+        for species in plan.species:
+            if species.name in owners:
+                _log(f"Error: species '{species.name}' is in both {owners[species.name]} "
+                     f"and {source.name}")
+                return False
+            owners[species.name] = source.name
+
+    _log(f"\nBuilding {output} from: {data_version(sources)}")
     try:
         if not init_database(force=True, db_path=staging):
             return False
-        run_imports(plan, staging)
-        info = write_build_info(staging, plan, data_repo)
+        for source, plan in builds:
+            _log(f"\n##### {source.name} ({plan.manifest_path}) #####")
+            run_imports(plan, staging)
+        info = write_build_info(staging, builds)
         _log("\nOptimizing...")
         DatabaseManager(db_path=staging, read_only=False).optimize(vacuum=True)
     except BuildError as exc:
@@ -494,7 +734,7 @@ def _build(data_repo: str, output: str, compare_to: Optional[str], cache_dir: st
         return False
 
     _log("\nChecking the result...")
-    problems = validate(plan, staging)
+    problems = [problem for _, plan in builds for problem in validate(plan, staging)]
     if problems:
         _log("Build failed checks; the existing database was not replaced:")
         for problem in problems:
@@ -514,26 +754,49 @@ def _build(data_repo: str, output: str, compare_to: Optional[str], cache_dir: st
     os.replace(staging, output)
     size_mb = os.path.getsize(output) / 1024 / 1024
     _log(f"\nBuilt {output} ({size_mb:.1f} MB)")
-    _log(f"  data repo commit: {info['data_repo_commit']}")
-    for label, source in plan.sources.items():
-        _log(f"  {label}: {source}")
+    for source, plan in builds:
+        _log(f"  {source.name}: version {source.version or 'newest'}, "
+             f"{source.repo or source.path} ref {source.ref or '-'} "
+             f"commit {(source.commit or 'unknown')[:12]}")
+        for label, value in plan.sources.items():
+            _log(f"    {label}: {value}")
+    if version_file:
+        with open(version_file, "w", encoding="utf-8") as handle:
+            handle.write(info["data_version"])
     return True
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
+        "--sources",
+        default=os.path.join(REPO_ROOT, "data_sources.toml"),
+        help="Data sources file listing each data repository and the ref to build "
+             "(default: data_sources.toml; ignored when --data-repo is given)",
+    )
+    parser.add_argument(
+        "--refs",
+        action="append",
+        default=[],
+        help="Override refs for this build only, e.g. alfalfa=master (comma-separated "
+             "or repeated)",
+    )
+    parser.add_argument(
+        "--versions",
+        action="append",
+        default=[],
+        help="Override FASTA versions for this build only, e.g. alfalfa=v056",
+    )
+    parser.add_argument(
         "--data-repo",
-        default=os.getenv(
-            "HAPSEARCH_DATA_REPO", os.path.join(os.path.dirname(REPO_ROOT), "alfalfa_haplotype_db")
-        ),
-        help="Checkout of the data repository (default: ../alfalfa_haplotype_db or "
-             "HAPSEARCH_DATA_REPO)",
+        action="append",
+        default=[],
+        help="Build from local checkout(s) instead of fetching the data sources",
     )
     parser.add_argument(
         "--manifest",
-        help="Manifest path inside the data repository (default: the one "
-             "{species}/data/hapSearch/manifest.toml)",
+        help="Manifest path inside a single --data-repo (default: the one in "
+             "data/hapSearch/ or {species}/data/hapSearch/)",
     )
     parser.add_argument("--output", default=config.SQLITE_DB_PATH, help="Database file to write")
     parser.add_argument(
@@ -543,13 +806,39 @@ def main() -> None:
     parser.add_argument(
         "--cache-dir",
         default=os.path.join(REPO_ROOT, ".build-cache"),
-        help="Where files fetched from other GitHub repositories are kept",
+        help="Where fetched data repositories and files are kept",
+    )
+    parser.add_argument(
+        "--version-file",
+        help="Write a one-line summary of the data versions here (used by Cloud Build)",
     )
     args = parser.parse_args()
 
+    try:
+        if args.data_repo:
+            if args.refs:
+                raise BuildError("--refs applies to --sources, not --data-repo")
+            versions = parse_ref_overrides(args.versions)
+            if versions and len(args.data_repo) > 1:
+                raise BuildError("With several --data-repo, pin versions in data_sources.toml")
+            if args.manifest and len(args.data_repo) > 1:
+                raise BuildError("--manifest can only be used with a single --data-repo")
+            sources = [local_source(path, args.manifest) for path in args.data_repo]
+            if versions:
+                sources[0].version = next(iter(versions.values()))
+            for source in sources:
+                if not os.path.isdir(source.path):
+                    raise BuildError(f"Data repository not found at {source.path}")
+        else:
+            sources = load_data_sources(args.sources, parse_ref_overrides(args.refs),
+                                        parse_ref_overrides(args.versions))
+    except BuildError as exc:
+        print(f"Error: {exc}", flush=True)
+        sys.exit(1)
+
     compare_to = args.compare_to or (args.output if os.path.isfile(args.output) else None)
-    sys.exit(0 if build(args.data_repo, args.output, compare_to, args.cache_dir, args.manifest)
-             else 1)
+    ok = build(sources, args.output, compare_to, args.cache_dir, args.version_file)
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

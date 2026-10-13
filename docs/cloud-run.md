@@ -31,8 +31,8 @@ stored image and Firestore storage.
    tokens, so no personal GitHub token is stored and nothing expires.
 3. **Create the trigger** (the script prints the exact settings): manual invocation,
    repository `Breeding-Insight-HapSearch`, branch `feature-MSA`, `cloudbuild.yaml`,
-   service account `hapsearch-cloud-build`. If the data repository's link name is not
-   `Breeding-Insight-alfalfa_haplotype_db`, set `_DATA_REPO_LINK` on the trigger.
+   service account `hapsearch-cloud-build`. Each data repository's link name must
+   match its `link` in `data_sources.toml` (`Breeding-Insight-alfalfa_haplotype_db`).
 4. **Run the trigger.** The first run creates the service, fully configured.
 5. **Add the ORCID redirect URI** `https://hapsearch-PROJECT_NUMBER.us-west1.run.app/auth/callback`
    to the shared BI ORCID application, then open `/health` and sign in.
