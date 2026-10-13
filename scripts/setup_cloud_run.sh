@@ -4,7 +4,7 @@
 # Run it in Cloud Shell (console.cloud.google.com, the >_ button), which already
 # has gcloud and your login:
 #
-#   git clone --branch cloud_run https://github.com/Breeding-Insight/HapSearch.git
+#   git clone --branch feature-MSA https://github.com/Breeding-Insight/HapSearch.git
 #   cd HapSearch && bash scripts/setup_cloud_run.sh
 #
 # Safe to re-run: anything that already exists is left alone. It creates the
@@ -175,7 +175,7 @@ Setup complete. Remaining steps (console):
 1. Cloud Build -> Triggers -> Connect repository: GitHub, Breeding-Insight/HapSearch.
 2. Create trigger:
      Event: Manual invocation
-     Source: Breeding-Insight/HapSearch, branch cloud_run (main once merged)
+     Source: Breeding-Insight/HapSearch, branch feature-MSA
      Configuration: Cloud Build configuration file, cloudbuild.yaml
      Service account: ${BUILD_SA}
    Then Run it. The first run creates the service at

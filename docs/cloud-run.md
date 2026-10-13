@@ -14,7 +14,7 @@ stored image and Firestore storage.
    and AlloMate:
 
    ```bash
-   git clone --branch cloud_run https://github.com/Breeding-Insight/HapSearch.git
+   git clone --branch feature-MSA https://github.com/Breeding-Insight/HapSearch.git
    cd HapSearch && bash scripts/setup_cloud_run.sh
    ```
 
@@ -26,7 +26,7 @@ stored image and Firestore storage.
    allowlisted user.
 2. **Connect GitHub and create the trigger** in Cloud Build (the script prints the
    exact settings): manual invocation, `Breeding-Insight/HapSearch`, `cloudbuild.yaml`,
-   service account `hapsearch-cloud-build`.
+   branch `feature-MSA`, service account `hapsearch-cloud-build`.
 3. **Run the trigger.** The first run creates the service, fully configured.
 4. **Add the ORCID redirect URI** `https://hapsearch-PROJECT_NUMBER.us-west1.run.app/auth/callback`
    to the shared BI ORCID application, then open `/health` and sign in.
