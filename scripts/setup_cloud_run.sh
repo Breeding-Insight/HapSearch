@@ -168,11 +168,13 @@ Setup complete. Remaining steps (console):
      to approve it) with access to HapSearch and alfalfa_haplotype_db.
    Then Link repositories: Breeding-Insight/HapSearch and
      Breeding-Insight/alfalfa_haplotype_db (keep the suggested names,
-     e.g. Breeding-Insight-alfalfa_haplotype_db).
+     e.g. Breeding-Insight-alfalfa_haplotype_db; it must match "link" in
+     data_sources.toml).
 2. Cloud Build -> Triggers -> Create trigger (region ${REGION}):
      Event: Manual invocation
      Source: 2nd gen, repository Breeding-Insight-HapSearch, branch feature-MSA
      Configuration: Cloud Build configuration file, cloudbuild.yaml
+     Substitution (optional): _REFS, empty = the refs in data_sources.toml
      Service account: ${BUILD_SA}
    Then Run it. The first run creates the service at
      ${SERVICE_URL}

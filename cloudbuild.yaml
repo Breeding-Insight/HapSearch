@@ -1,64 +1,50 @@
-# Builds the HapSearch database from the data repository, then builds and
-# deploys the app. Run it manually from the Cloud Build trigger; set _DATA_REF
-# to the data repository tag (or branch) to publish. See docs/updating-data.md.
+# Builds the HapSearch database from the species data repositories pinned in
+# data_sources.toml, then builds and deploys the app. Run it manually from the
+# Cloud Build trigger. To build one species at a different ref without editing
+# data_sources.toml, set _REFS (e.g. "alfalfa=master"). See docs/updating-data.md.
 #
 # Everything it needs (secrets, service accounts, Firestore, Artifact Registry)
 # is created once by scripts/setup_cloud_run.sh; see docs/cloud-run.md.
 #
-# The data repository is read through Cloud Build's GitHub connection (the
-# "Google Cloud Build" GitHub App): link the repository to the connection, and
-# each build gets a short-lived read-only token. No personal tokens are stored.
+# Data repositories are read through Cloud Build's GitHub connection (the
+# "Google Cloud Build" GitHub App): link each one to the connection under the
+# name given as `link` in data_sources.toml, and each build gets short-lived
+# read-only tokens. No personal tokens are stored.
 substitutions:
   _REGION: us-west1
   _REPOSITORY: hapsearch
   _SERVICE: hapsearch
-  _DATA_REPO: Breeding-Insight/alfalfa_haplotype_db
-  _DATA_REF: master
-  # Cloud Build connection and the data repository's name within it, as shown
-  # under Cloud Build -> Repositories (2nd gen).
+  # One-off ref overrides, e.g. "alfalfa=master,blueberry=v2"; empty uses the
+  # refs pinned in data_sources.toml.
+  _REFS: ""
+  # Cloud Build 2nd-gen GitHub connection holding the linked data repositories.
   _GITHUB_CONNECTION: github
-  _DATA_REPO_LINK: Breeding-Insight-alfalfa_haplotype_db
   _FIRESTORE_DATABASE: hapsearch-db
   # Public GitHub Pages landing page; empty serves the built-in one.
   _LANDING_URL: ""
 
 steps:
-  # 1. Clone the data repository with a short-lived read token from the
-  #    GitHub connection. The token goes in an HTTP header, so it never appears
-  #    in the clone URL or the log. The clone lives outside /workspace to keep
-  #    it out of the Docker build context.
-  - id: clone-data
-    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        repo="projects/${PROJECT_ID}/locations/${_REGION}/connections/${_GITHUB_CONNECTION}/repositories/${_DATA_REPO_LINK}"
-        token="$$(curl -sSf -X POST -H "Authorization: Bearer $$(gcloud auth print-access-token)" \
-          -H "Content-Type: application/json" -d '{}' \
-          "https://cloudbuild.googleapis.com/v2/$${repo}:accessReadToken" \
-          | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"
-        auth="$$(printf 'x-access-token:%s' "$$token" | base64 -w0)"
-        git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $$auth" \
-          clone --quiet --depth 1 --branch "${_DATA_REF}" \
-          "https://github.com/${_DATA_REPO}.git" /builder/home/data-repo
-        git -C /builder/home/data-repo log -1 --format='Data repo commit: %H %s'
-
-  # 2. Build and check the database. The build stops here if any import or
-  #    check fails, so nothing is deployed.
+  # 1. Fetch every data source at its ref, then build and check the database.
+  #    The build stops here if any import or check fails, so nothing is
+  #    deployed. Sources are fetched outside /workspace to keep them out of the
+  #    Docker build context.
   - id: build-database
     name: python:3.13-slim
     entrypoint: bash
+    env:
+      - HAPSEARCH_BUILD_CONNECTION=projects/${PROJECT_ID}/locations/${_REGION}/connections/${_GITHUB_CONNECTION}
     args:
       - -c
       - |
         set -euo pipefail
-        # git records the data commit; g++ builds parmed (a dash-bio dependency).
+        # git fetches the data sources; g++ builds parmed (a dash-bio dependency).
         apt-get update -qq && apt-get install -y -qq --no-install-recommends git g++ > /dev/null
         pip install --quiet --root-user-action=ignore -r requirements.txt
         python -W ignore scripts/build_database.py \
-          --data-repo /builder/home/data-repo \
+          --sources data_sources.toml \
+          --refs "${_REFS}" \
+          --cache-dir /builder/home/build-cache \
+          --version-file /builder/home/data_version.txt \
           --output data/hapsearch.db
 
   - id: build-image
@@ -76,34 +62,39 @@ steps:
       - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
 
   # Every service setting lives here, so the first run creates a fully
-  # configured service and later runs keep it that way. The data version is
-  # recorded on the revision so the console shows what each revision serves.
+  # configured service and later runs keep it that way. The data versions
+  # (source=ref@commit) are recorded on the revision as HAPSEARCH_DATA_VERSION.
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - ${_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
-      - --region=${_REGION}
-      - --platform=managed
-      - --service-account=hapsearch-cloud-run@${PROJECT_ID}.iam.gserviceaccount.com
-      - --allow-unauthenticated
-      - --port=8080
-      - --cpu=1
-      - --memory=1Gi
-      - --cpu-throttling
-      - --cpu-boost
-      - --min-instances=0
-      - --max-instances=3
-      - --execution-environment=gen2
-      - --update-env-vars=APP_ENV=production,DEBUG_MODE=false,TLS_ENABLED=false,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},HAPSEARCH_LANDING_URL=${_LANDING_URL},HAPSEARCH_DATA_VERSION=${_DATA_REF}
-      - --update-secrets=SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest
-      - --quiet
+      - -c
+      - |
+        set -euo pipefail
+        version="$$(cat /builder/home/data_version.txt)"
+        echo "Deploying data: $${version}"
+        gcloud run deploy "${_SERVICE}" \
+          --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}" \
+          --region="${_REGION}" \
+          --platform=managed \
+          --service-account="hapsearch-cloud-run@${PROJECT_ID}.iam.gserviceaccount.com" \
+          --allow-unauthenticated \
+          --port=8080 \
+          --cpu=1 \
+          --memory=1Gi \
+          --cpu-throttling \
+          --cpu-boost \
+          --min-instances=0 \
+          --max-instances=3 \
+          --execution-environment=gen2 \
+          --update-env-vars="APP_ENV=production,DEBUG_MODE=false,TLS_ENABLED=false,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},HAPSEARCH_LANDING_URL=${_LANDING_URL},HAPSEARCH_DATA_VERSION=$${version}" \
+          --update-secrets="SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest" \
+          --quiet
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
 
 options:
   logging: CLOUD_LOGGING_ONLY
+  # Ignore substitutions set on the trigger that this file no longer uses.
+  substitutionOption: ALLOW_LOOSE

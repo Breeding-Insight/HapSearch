@@ -1,0 +1,25 @@
+# Which version of each species' data goes into HapSearch.
+#
+# scripts/build_database.py (and the Cloud Build trigger) fetches every source
+# below at its ref and builds them into one database. Pin ref to a tag (or a
+# commit) so a rebuild only changes the species whose ref you change; a branch
+# name such as "master" means "whatever is latest" on every build.
+#
+# To publish new data for one species: tag the data repository, change that
+# species' ref here, commit, and run the trigger. For a one-off build without
+# editing this file, set the trigger's _REFS substitution (e.g.
+# "alfalfa=master") or pass --refs locally. See docs/updating-data.md.
+#
+#   name     short label, used in --refs/_REFS and in build logs
+#   repo     GitHub repository (owner/name)
+#   ref      tag, commit or branch to build
+#   link     the repository's name in Cloud Build's GitHub connection
+#            (Cloud Build -> Repositories -> 2nd gen)
+#   manifest optional path to the manifest inside the repository
+#            (default: data/hapSearch/manifest.toml or */data/hapSearch/)
+
+[[source]]
+name = "alfalfa"
+repo = "Breeding-Insight/alfalfa_haplotype_db"
+ref = "master"  # replace with a tag, e.g. "hapsearch-v055", once one exists
+link = "Breeding-Insight-alfalfa_haplotype_db"

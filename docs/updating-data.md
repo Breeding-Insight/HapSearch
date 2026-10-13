@@ -1,9 +1,15 @@
 # Updating HapSearch data
 
-HapSearch's database is rebuilt from scratch every time from the files in
+HapSearch's database is rebuilt from scratch every time from each species' data
+repository, currently
 [Breeding-Insight/alfalfa_haplotype_db](https://github.com/Breeding-Insight/alfalfa_haplotype_db).
 Nobody edits the database directly. To add or change data, you change files in that
 repository, then publish a new build.
+
+Which version of each repository is built is set in
+[data_sources.toml](../data_sources.toml) in this repository: one `[[source]]` per
+species, each with a `ref` (a tag, commit or branch). Pinning each species to a tag
+means a rebuild only changes the species whose `ref` you change.
 
 ## Where the inputs live
 
@@ -53,41 +59,47 @@ other files were used, so you can always confirm what was picked.
 Commit the change, then tag the commit so the build can be pinned to it, for example:
 
 ```bash
-git tag hapsearch-2026-10-13
+git tag hapsearch-v055
 git push origin master --tags
-```
-
-## Check the build on your computer (optional, recommended)
-
-From the HapSearch app repository, with the data repository cloned next to it:
-
-```bash
-python scripts/build_database.py --data-repo ../alfalfa_haplotype_db
-```
-
-This takes about 3 minutes. It writes `data/hapsearch.db` only if every import and
-check passes, and prints how many rows each table gained or lost compared with your
-previous local build. Run the app locally to look at the result:
-
-```bash
-python app.py
 ```
 
 ## Publish
 
-1. In the Google Cloud console, open **Cloud Build → Triggers**.
-2. On the HapSearch trigger, click **Run**.
-3. Set `_DATA_REF` to the tag you pushed (or leave it as `master` for the latest commit),
-   and click **Run trigger**.
+1. **Point HapSearch at the new version.** In this repository, set that species'
+   `ref` in `data_sources.toml` to the tag you pushed, commit, and push to the branch
+   the trigger builds (`feature-MSA`). Other species keep their pinned refs, so their
+   data does not change. If a species' `ref` is a branch such as `master`, skip this
+   step: every build takes that branch's latest commit.
+2. In the Google Cloud console, open **Cloud Build → Triggers** and click **Run** on
+   `hapsearch-publish`.
+3. Leave `_REFS` empty to build exactly what `data_sources.toml` pins, then click
+   **Run trigger**.
 
-The pipeline ([cloudbuild.yaml](../cloudbuild.yaml)) clones the data repository at that
-ref, builds and checks the database, builds the app image and deploys it. If anything
-fails, nothing is deployed and the build log shows why. A successful run takes roughly
-10 minutes; the new version is live as soon as it finishes, and the Cloud Run revision
-records the data version in `HAPSEARCH_DATA_VERSION`.
+To try a version without committing a pin, set `_REFS` for that run only, e.g.
+`alfalfa=master` or `alfalfa=hapsearch-v056`; separate several with commas. Commit the
+pin in `data_sources.toml` once you are happy with the result, or the next normal run
+goes back to the pinned version.
 
-The database itself records what it was built from in its `build_info` table
-(build time, data repository commit, manifest checksum).
+The pipeline ([cloudbuild.yaml](../cloudbuild.yaml)) fetches every source at its ref,
+builds and checks the database, builds the app image and deploys it. If anything fails,
+nothing is deployed and the build log shows why. A successful run takes roughly 10
+minutes; the new version is live as soon as it finishes. The Cloud Run revision records
+the exact data in `HAPSEARCH_DATA_VERSION` (e.g. `alfalfa=hapsearch-v055@1a2b3c4d5e6f`),
+and the database's `build_info` table lists every source, its commit and the files used.
+
+## Check a build on your computer (optional)
+
+From the HapSearch app repository:
+
+```bash
+python scripts/build_database.py                          # the pinned refs
+python scripts/build_database.py --refs alfalfa=master    # try another ref
+python scripts/build_database.py --data-repo ../alfalfa_haplotype_db   # a local checkout
+```
+
+This takes about 3 minutes per species and needs read access to the data
+repositories. It writes `data/hapsearch.db` only if every import and check passes, and
+prints how many rows each table gained or lost compared with your previous local build.
 
 ## Roll back
 
@@ -96,12 +108,20 @@ previous revision and **Manage traffic → 100%**. Fix the data, then publish ag
 
 ## One-time setup (already done once per project)
 
-- Cloud Build's GitHub connection (`github`, 2nd gen) with both
-  `Breeding-Insight/HapSearch` and `Breeding-Insight/alfalfa_haplotype_db` linked.
-  Builds read the data repository through it, so there is no token to renew. A new
-  species repository is linked the same way, then named in the trigger's
-  `_DATA_REPO` and `_DATA_REPO_LINK`.
+- Cloud Build's GitHub connection (`github`, 2nd gen) with `Breeding-Insight/HapSearch`
+  and every data repository linked. Builds read the data repositories through it, so
+  there is no token to renew.
 - A Cloud Build trigger on the HapSearch app repository using `cloudbuild.yaml`, with
-  **manual** invocation and the substitution `_DATA_REF`.
+  **manual** invocation and the optional substitution `_REFS`.
+
+## Adding a species
+
+1. Give its data repository a `data/hapSearch/manifest.toml` (see
+   [manifest.example.toml](manifest.example.toml)) and tag a version.
+2. Link the repository to the `github` connection (Cloud Build → Repositories →
+   2nd gen) and note its link name.
+3. Add a `[[source]]` to `data_sources.toml` with its `name`, `repo`, `ref` and
+   `link`, then publish as above. Species names and sample codes must not clash with
+   another species.
 - The Cloud Run service, Firestore database and service identity described in
   [cloud-run.md](cloud-run.md).
