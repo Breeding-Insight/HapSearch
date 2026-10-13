@@ -2,22 +2,48 @@ import os
 import tempfile
 import unittest
 
-from database.presence_artifacts import write_presence_lookup_artifact
+from database.db_manager import DatabaseManager
+from database.presence_artifacts import clear_presence_cache, write_presence_artifact
 from database.queries import (
     get_microhaplotype_accumulation_data,
     get_microhaplotype_project_sharing_data,
 )
 
 
+def presence_db(temp_dir):
+    db = DatabaseManager(db_path=os.path.join(temp_dir, "presence.db"), read_only=False)
+    db.ensure_schema()
+    return db
+
+
+def write_presence_lookup_artifact(
+    pairs, microhaplotype_ids, entity_ids, *, entity_type, species_id, source_path, output_dir
+):
+    with presence_db(output_dir).get_connection() as conn:
+        return write_presence_artifact(
+            conn.cursor(),
+            pairs,
+            microhaplotype_ids,
+            entity_ids,
+            entity_type=entity_type,
+            species_id=species_id,
+            source_path=source_path,
+        )
+
+
 class FakeAccumulationDb:
-    def __init__(self, sample_artifact_path, project_artifact_path, contact_rows=None):
-        self.sample_artifact_path = sample_artifact_path
-        self.project_artifact_path = project_artifact_path
+    """Serves fixed metadata rows; presence tables come from a real SQLite file."""
+
+    def __init__(self, presence_store, contact_rows=None):
+        self.presence_store = presence_store
+        self.db_path = presence_store.db_path
         self.contact_rows = contact_rows or []
         self.queries = []
 
     def execute_query(self, query, params=()):
         self.queries.append(query)
+        if "FROM presence_" in query:
+            return self.presence_store.execute_query(query, params)
         if "FROM project_contacts pc" in query:
             return self.contact_rows
         if "FROM samples s" in query:
@@ -60,28 +86,13 @@ class FakeAccumulationDb:
                     "description": "genotyping_source=DAl23-8561",
                 },
             ]
-        if "FROM presence_artifacts" in query and "entity_type = 'project_lookup'" in query:
-            return [
-                {
-                    "artifact_path": self.project_artifact_path,
-                    "entity_type": "project_lookup",
-                },
-            ]
-        if "FROM presence_artifacts" in query:
-            return [
-                {
-                    "artifact_path": self.sample_artifact_path,
-                    "entity_type": "sample_lookup",
-                },
-                {
-                    "artifact_path": self.project_artifact_path,
-                    "entity_type": "project_lookup",
-                },
-            ]
         return []
 
 
 class AccumulationCurveTests(unittest.TestCase):
+    def setUp(self):
+        clear_presence_cache()
+
     def test_includes_project_only_presence_without_double_counting_sample_projects(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = os.path.join(temp_dir, "matrix.csv")
@@ -92,7 +103,7 @@ class AccumulationCurveTests(unittest.TestCase):
                 [(10, 101), (20, 102)],
                 [10, 20, 30],
                 [101, 102],
-                entity_type="sample_lookup",
+                entity_type="sample",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
@@ -101,15 +112,14 @@ class AccumulationCurveTests(unittest.TestCase):
                 [(10, 1), (20, 2), (30, 3)],
                 [10, 20, 30],
                 [1, 2, 3],
-                entity_type="project_lookup",
+                entity_type="project",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
             )
 
             db = FakeAccumulationDb(
-                sample_lookup["artifact_path"],
-                project_lookup["artifact_path"],
+                presence_db(temp_dir),
             )
             rows = get_microhaplotype_accumulation_data(db, 1)
             sampled_rows = get_microhaplotype_accumulation_data(
@@ -145,7 +155,7 @@ class AccumulationCurveTests(unittest.TestCase):
                 [(10, 101), (20, 102)],
                 [10, 20, 30],
                 [101, 102],
-                entity_type="sample_lookup",
+                entity_type="sample",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
@@ -154,15 +164,14 @@ class AccumulationCurveTests(unittest.TestCase):
                 [(10, 1), (20, 2), (30, 3)],
                 [10, 20, 30],
                 [1, 2, 3],
-                entity_type="project_lookup",
+                entity_type="project",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
             )
 
             db = FakeAccumulationDb(
-                sample_lookup["artifact_path"],
-                project_lookup["artifact_path"],
+                presence_db(temp_dir),
                 contact_rows=[
                     {"project_id": 1, "institution": "USDA ARS", "location": "Geneva, NY"},
                     {"project_id": 2, "institution": "USDA ARS", "location": "Corvallis, OR"},
@@ -199,7 +208,7 @@ class AccumulationCurveTests(unittest.TestCase):
                 [],
                 [10, 20, 30, 40, 50, 60],
                 [],
-                entity_type="sample_lookup",
+                entity_type="sample",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
@@ -214,15 +223,14 @@ class AccumulationCurveTests(unittest.TestCase):
                 ],
                 [10, 20, 30, 40, 50, 60],
                 [1, 2, 3],
-                entity_type="project_lookup",
+                entity_type="project",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
             )
 
             db = FakeAccumulationDb(
-                sample_lookup["artifact_path"],
-                project_lookup["artifact_path"],
+                presence_db(temp_dir),
             )
             default_summary = get_microhaplotype_project_sharing_data(db, 1)
             summary = get_microhaplotype_project_sharing_data(
@@ -331,7 +339,7 @@ class AccumulationCurveTests(unittest.TestCase):
                 [],
                 [10, 20],
                 [],
-                entity_type="sample_lookup",
+                entity_type="sample",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
@@ -343,15 +351,14 @@ class AccumulationCurveTests(unittest.TestCase):
                 ],
                 [10, 20],
                 [2, 3],
-                entity_type="project_lookup",
+                entity_type="project",
                 species_id=1,
                 source_path=source_path,
                 output_dir=temp_dir,
             )
 
             db = FakeAccumulationDb(
-                sample_lookup["artifact_path"],
-                project_lookup["artifact_path"],
+                presence_db(temp_dir),
                 contact_rows=[
                     {"project_id": 2, "institution": "Fallback Two", "location": ""},
                     {"project_id": 2, "institution": "Fallback Three", "location": ""},

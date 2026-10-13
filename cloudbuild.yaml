@@ -1,0 +1,101 @@
+# Builds the HapSearch database from the data repository, then builds and
+# deploys the app. Run it manually from the Cloud Build trigger; set _DATA_REF
+# to the data repository tag (or branch) to publish. See docs/updating-data.md.
+#
+# Everything it needs (secrets, service accounts, Firestore, Artifact Registry)
+# is created once by scripts/setup_cloud_run.sh; see docs/cloud-run.md.
+substitutions:
+  _REGION: us-west1
+  _REPOSITORY: hapsearch
+  _SERVICE: hapsearch
+  _DATA_REPO: Breeding-Insight/alfalfa_haplotype_db
+  _DATA_REF: master
+  _FIRESTORE_DATABASE: hapsearch-db
+  # Public GitHub Pages landing page; empty serves the built-in one.
+  _LANDING_URL: ""
+
+steps:
+  # 1. Clone the data repository. The token is sent as an HTTP header so it
+  #    never appears in the clone URL or the log.
+  - id: clone-data
+    name: gcr.io/cloud-builders/git
+    entrypoint: bash
+    secretEnv: [GITHUB_TOKEN]
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        auth="$(printf 'x-access-token:%s' "$$GITHUB_TOKEN" | base64 -w0)"
+        git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $$auth" \
+          clone --quiet --depth 1 --branch "${_DATA_REF}" \
+          "https://github.com/${_DATA_REPO}.git" /workspace/data-repo
+        git -C /workspace/data-repo log -1 --format='Data repo commit: %H %s'
+
+  # 2. Build and check the database. The build stops here if any import or
+  #    check fails, so nothing is deployed.
+  - id: build-database
+    name: python:3.13-slim
+    entrypoint: bash
+    secretEnv: [GITHUB_TOKEN]
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # git fetches pinned sources; g++ builds parmed (a dash-bio dependency).
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends git g++ > /dev/null
+        pip install --quiet --root-user-action=ignore -r requirements.txt
+        python -W ignore scripts/build_database.py \
+          --data-repo /workspace/data-repo \
+          --output data/hapsearch.db
+
+  - id: build-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
+      - .
+
+  - id: push-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
+
+  # Every service setting lives here, so the first run creates a fully
+  # configured service and later runs keep it that way. The data version is
+  # recorded on the revision so the console shows what each revision serves.
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
+      - --region=${_REGION}
+      - --platform=managed
+      - --service-account=hapsearch-cloud-run@${PROJECT_ID}.iam.gserviceaccount.com
+      - --allow-unauthenticated
+      - --port=8080
+      - --cpu=1
+      - --memory=1Gi
+      - --cpu-throttling
+      - --cpu-boost
+      - --min-instances=0
+      - --max-instances=3
+      - --execution-environment=gen2
+      - --update-env-vars=APP_ENV=production,DEBUG_MODE=false,TLS_ENABLED=false,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},HAPSEARCH_LANDING_URL=${_LANDING_URL},HAPSEARCH_DATA_VERSION=${_DATA_REF}
+      - --update-secrets=SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest
+      - --quiet
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${PROJECT_ID}/secrets/hapsearch-github-token/versions/latest
+      env: GITHUB_TOKEN
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
+
+options:
+  logging: CLOUD_LOGGING_ONLY

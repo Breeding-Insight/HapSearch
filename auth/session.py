@@ -1,9 +1,13 @@
 """Session helpers for authentication and authorization"""
 
 from functools import wraps
+import logging
+
 from flask import session, redirect, request
-from database.db_manager import DatabaseManager
+from auth.user_store import get_user_store
 import config
+
+logger = logging.getLogger(__name__)
 
 
 def start_local_dev_session():
@@ -34,11 +38,6 @@ def is_authenticated():
     return session.get('orcid_id') is not None
 
 
-def is_admin():
-    """Check if the current user is an admin."""
-    return is_authenticated() and session.get('user_role') == 'admin'
-
-
 def require_login(f):
     """Flask route decorator that redirects to landing page if not logged in."""
     @wraps(f)
@@ -56,23 +55,7 @@ def lookup_user(orcid_id):
         dict with user record or None if not found / inactive.
     """
     try:
-        db = DatabaseManager()
-        results = db.execute_query(
-            "SELECT * FROM users WHERE orcid_id = ? AND is_active = 1",
-            (orcid_id,)
-        )
-        return results[0] if results else None
+        return get_user_store().get_active_user(orcid_id)
     except Exception:
+        logger.exception("User lookup failed for %s", orcid_id)
         return None
-
-
-def update_last_login(orcid_id):
-    """Update last_login timestamp for a user."""
-    try:
-        db = DatabaseManager()
-        db.execute_update(
-            "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE orcid_id = ?",
-            (orcid_id,)
-        )
-    except Exception:
-        pass

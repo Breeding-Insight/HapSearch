@@ -13,7 +13,7 @@ services:
       - ./app.py:/app/app.py
       - ./config.py:/app/config.py
       - ./dash_app.py:/app/dash_app.py
-      - ./schema_mssql.sql:/app/schema_mssql.sql
+      - ./schema_sqlite.sql:/app/schema_sqlite.sql
       - ./database:/app/database
       - ./design:/app/design
       - ./data:/app/data
@@ -24,7 +24,6 @@ services:
       - ./auth:/app/auth
       - ./templates:/app/templates
       - ./alignment:/app/alignment
-      - /srv/hapsearch/development/presence_artifacts:/srv/hapsearch/development/presence_artifacts
       - /etc/ssl/certs/ifs-brin-01.pem:/cert.pem:ro
       - /etc/ssl/private/ifs-brin-01.key:/key.pem:ro
     env_file:
@@ -33,8 +32,8 @@ services:
       - APP_ENV=development
       - DEBUG_MODE=true
       - APP_PORT=5000
-      - MSSQL_DRIVER=ODBC Driver 18 for SQL Server
-      - PRESENCE_ARTIFACT_DIR=/srv/hapsearch/development/presence_artifacts
+      - SQLITE_DB_PATH=/app/data/hapsearch.db
+      - SQLITE_READ_ONLY=false
       - BYPASS_ORCID_AUTH=false
       - BYPASS_AUTH_WHITELIST=false
       - TLS_ENABLED=true

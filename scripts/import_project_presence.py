@@ -11,7 +11,7 @@ Project header convention (example):
   P01_Debby_Zhanyou_digestibility_16plates_DAl21-6679
 
 This importer:
-- Stores compressed allele-to-project and project-to-allele bitmap artifacts
+- Stores a packed project-to-allele bitmap matrix in the SQLite database
 - Auto-creates missing projects using canonical project_code from mapping
 - Attempts a best-effort parse of owner/informal name/genotyping source for project fields
 """
@@ -31,10 +31,8 @@ from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
     counts_by_microhaplotype,
     ensure_presence_artifact_schema,
-    record_presence_artifact,
     upsert_presence_summary,
-    write_presence_bitmap_artifact,
-    write_presence_lookup_artifact,
+    write_presence_artifact,
 )
 from scripts.presence_metadata import (
     genotyping_sources_match,
@@ -123,7 +121,6 @@ class ProjectPresenceImporter:
         project_mapping_path: str,
         owner_contacts_path: str,
         verbose: bool = True,
-        artifact_dir: Optional[str] = None,
     ) -> Dict[str, int]:
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"CSV file not found: {csv_path}")
@@ -333,28 +330,18 @@ class ProjectPresenceImporter:
                 print(f"  Built {len(pairs):,} presence pairs", flush=True)
 
             if verbose:
-                print("  Writing compressed project presence artifacts...", flush=True)
+                print("  Writing project presence bitmaps...", flush=True)
             ensure_presence_artifact_schema(cursor)
-            metadata = write_presence_bitmap_artifact(
+            metadata = write_presence_artifact(
+                cursor,
                 pairs,
                 mh_ids,
                 proj_ids,
                 entity_type="project",
                 species_id=artifact_species_id,
                 source_path=csv_path,
-                output_dir=artifact_dir,
             )
-            artifact_id = record_presence_artifact(cursor, metadata)
-            lookup_metadata = write_presence_lookup_artifact(
-                pairs,
-                mh_ids,
-                proj_ids,
-                entity_type="project_lookup",
-                species_id=artifact_species_id,
-                source_path=csv_path,
-                output_dir=artifact_dir,
-            )
-            record_presence_artifact(cursor, lookup_metadata)
+            artifact_id = metadata["id"]
             if artifact_id and artifact_species_id is not None:
                 upsert_presence_summary(
                     cursor,
@@ -368,13 +355,8 @@ class ProjectPresenceImporter:
             imported = len(pairs)
             if verbose:
                 size_mb = (metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
-                lookup_size_mb = (lookup_metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
                 print(
-                    f"  Allele->project artifact: {metadata['artifact_path']} ({size_mb:.2f} MB)",
-                    flush=True,
-                )
-                print(
-                    f"  Project->allele artifact: {lookup_metadata['artifact_path']} ({lookup_size_mb:.2f} MB)",
+                    f"  Project presence artifact #{artifact_id} ({size_mb:.2f} MB packed)",
                     flush=True,
                 )
 
@@ -438,14 +420,6 @@ def main() -> None:
             "data/presence_absence/HapSearch_mapping.csv and HapSearch_owner_contacts.csv."
         ),
     )
-    parser.add_argument(
-        "--presence-artifact-dir",
-        help=(
-            "Directory for compressed presence artifacts "
-            "(default: /srv/hapsearch/production/presence_artifacts in production; "
-            "/srv/hapsearch/development/presence_artifacts otherwise)"
-        ),
-    )
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
 
     args = parser.parse_args()
@@ -479,8 +453,8 @@ def main() -> None:
         args.project_mapping,
         args.owner_contacts,
         verbose=verbose,
-        artifact_dir=args.presence_artifact_dir,
     )
+    importer.db.optimize()
 
 
 if __name__ == "__main__":

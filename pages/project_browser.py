@@ -93,7 +93,7 @@ def load_projects(search_term, pi_filter, species_id):
         db = DatabaseManager()
 
         # Build query
-        species_list_expr = "STRING_AGG(sp.common_name, ', ')"
+        species_list_expr = "GROUP_CONCAT(sp.common_name, ', ')"
         query = f"""
         SELECT
             p.id,

@@ -99,11 +99,14 @@ class MicrohapMissingSampleTests(unittest.TestCase):
         db = MagicMock()
         db.execute_query.side_effect = [
             [{"id": 99}],
-            [{"artifact_path": "/tmp/sample_lookup.npz"}],
+            [{"id": 7}],
         ]
 
         with patch(
-            "database.queries.read_microhaplotype_ids_for_entity",
+            "database.queries.load_presence_artifact",
+            return_value={},
+        ), patch(
+            "database.queries.microhaplotype_ids_for_entity",
             return_value=list(range(1, 1803)),
         ):
             ids = _get_microhaplotype_ids_for_sample_filter_artifacts(

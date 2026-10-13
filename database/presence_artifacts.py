@@ -1,9 +1,19 @@
-"""Compressed filesystem artifacts for large presence/absence matrices."""
+"""Packed bitmap storage for large presence/absence matrices.
+
+Each imported matrix is one ``presence_artifacts`` row (holding the shared
+microhaplotype axis) plus one ``presence_bitmaps`` row per sample or project
+whose bits mark which microhaplotypes are present. Both live in the SQLite
+database, so the deployed app ships a single file.
+
+Only the entity-oriented layout is stored. Reads in the other direction
+(which entities carry a microhaplotype) extract one bit column from the same
+matrix, which is cheap once the matrix is cached in memory.
+"""
 
 import hashlib
-import json
 import os
-import time
+import threading
+from collections import OrderedDict
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -11,34 +21,12 @@ import numpy as np
 import config
 
 
-ARTIFACT_SCHEMA_VERSION = 1
-DEFAULT_COMPRESSION = "npz_packbits"
+ARTIFACT_SCHEMA_VERSION = 2
+DEFAULT_COMPRESSION = "sqlite_packbits"
+ENTITY_TYPES = ("sample", "project")
 
-
-def get_presence_artifact_dir() -> str:
-    """Return the configured presence artifact directory."""
-    return getattr(
-        config,
-        "PRESENCE_ARTIFACT_DIR",
-        "/srv/hapsearch/development/presence_artifacts",
-    )
-
-
-def ensure_artifact_dir(path: Optional[str] = None) -> str:
-    """Create and return an artifact directory."""
-    output_dir = path or get_presence_artifact_dir()
-    os.makedirs(output_dir, exist_ok=True)
-    return output_dir
-
-
-def _safe_stem(value: str) -> str:
-    safe = []
-    for ch in str(value):
-        if ch.isalnum() or ch in {"-", "_", "."}:
-            safe.append(ch)
-        else:
-            safe.append("_")
-    return "".join(safe).strip("_") or "presence"
+_cache: "OrderedDict[Tuple[str, int, int], Dict[str, object]]" = OrderedDict()
+_cache_lock = threading.Lock()
 
 
 def _sha256_file(path: str) -> str:
@@ -49,127 +37,18 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _pack_presence_matrix(
+def _pack_entity_rows(
     pairs: Sequence[Tuple[int, int]],
     microhaplotype_ids: Sequence[int],
     entity_ids: Sequence[int],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Pack presence pairs into one bit row per microhaplotype."""
-    mh_array = np.array(list(microhaplotype_ids), dtype=np.int64)
-    entity_array = np.array(list(entity_ids), dtype=np.int64)
-    matrix = np.zeros((len(mh_array), len(entity_array)), dtype=np.bool_)
-
-    mh_pos = {int(mid): i for i, mid in enumerate(mh_array.tolist())}
-    entity_pos = {int(eid): i for i, eid in enumerate(entity_array.tolist())}
-    for raw_mh_id, raw_entity_id in pairs:
-        row = mh_pos.get(int(raw_mh_id))
-        col = entity_pos.get(int(raw_entity_id))
-        if row is not None and col is not None:
-            matrix[row, col] = True
-
-    packed = np.packbits(matrix, axis=1, bitorder="little")
-    present_counts = matrix.sum(axis=1).astype(np.int64)
-    return mh_array, entity_array, packed, present_counts
-
-
-def write_presence_bitmap_artifact(
-    pairs: Sequence[Tuple[int, int]],
-    microhaplotype_ids: Sequence[int],
-    entity_ids: Sequence[int],
-    *,
-    entity_type: str,
-    source_path: str,
-    species_id: Optional[int] = None,
-    project_id: Optional[int] = None,
-    output_dir: Optional[str] = None,
-) -> Dict[str, object]:
-    """Write a compressed bitmap artifact and return metadata for SQL storage."""
-    if entity_type not in {"sample", "project"}:
-        raise ValueError("entity_type must be 'sample' or 'project'")
-
-    artifact_dir = ensure_artifact_dir(output_dir)
-    created_at = int(time.time())
-    source_stem = _safe_stem(os.path.splitext(os.path.basename(source_path))[0])
-    identity = f"{entity_type}:{species_id}:{project_id}:{source_path}:{created_at}"
-    short_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
-    artifact_name = f"{source_stem}.{entity_type}.{short_hash}.npz"
-    artifact_path = os.path.join(artifact_dir, artifact_name)
-
-    mh_array, entity_array, packed, present_counts = _pack_presence_matrix(
-        pairs,
-        microhaplotype_ids,
-        entity_ids,
-    )
-
-    np.savez_compressed(
-        artifact_path,
-        schema_version=np.array([ARTIFACT_SCHEMA_VERSION], dtype=np.int16),
-        entity_type=np.array([entity_type]),
-        microhaplotype_ids=mh_array,
-        entity_ids=entity_array,
-        packed_presence=packed,
-        present_counts=present_counts,
-        entity_count=np.array([len(entity_array)], dtype=np.int64),
-        bitorder=np.array(["little"]),
-    )
-
-    metadata = {
-        "schema_version": ARTIFACT_SCHEMA_VERSION,
-        "artifact_path": artifact_path,
-        "artifact_name": artifact_name,
-        "entity_type": entity_type,
-        "species_id": species_id,
-        "project_id": project_id,
-        "source_path": source_path,
-        "source_sha256": _sha256_file(source_path) if os.path.exists(source_path) else "",
-        "microhaplotype_count": int(len(mh_array)),
-        "entity_count": int(len(entity_array)),
-        "presence_count": int(sum(present_counts.tolist())),
-        "compression": DEFAULT_COMPRESSION,
-    }
-
-    json_path = artifact_path + ".json"
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, indent=2, sort_keys=True)
-    metadata["metadata_path"] = json_path
-    metadata["artifact_size_bytes"] = os.path.getsize(artifact_path)
-    return metadata
-
-
-def write_presence_lookup_artifact(
-    pairs: Sequence[Tuple[int, int]],
-    microhaplotype_ids: Sequence[int],
-    entity_ids: Sequence[int],
-    *,
-    entity_type: str,
-    source_path: str,
-    species_id: Optional[int] = None,
-    project_id: Optional[int] = None,
-    output_dir: Optional[str] = None,
-) -> Dict[str, object]:
-    """Write an entity-oriented lookup artifact.
-
-    For sample presence this stores sample rows and microhaplotype columns, which
-    supports the UI's "filter haplotypes by sample" path without a relational
-    row per presence edge.
-    """
-    if entity_type not in {"sample_lookup", "project_lookup"}:
-        raise ValueError("entity_type must be 'sample_lookup' or 'project_lookup'")
-
-    artifact_dir = ensure_artifact_dir(output_dir)
-    created_at = int(time.time())
-    source_stem = _safe_stem(os.path.splitext(os.path.basename(source_path))[0])
-    identity = f"{entity_type}:{species_id}:{project_id}:{source_path}:{created_at}"
-    short_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
-    artifact_name = f"{source_stem}.{entity_type}.{short_hash}.npz"
-    artifact_path = os.path.join(artifact_dir, artifact_name)
-
+    """Pack presence pairs into one bit row per entity."""
     entity_array = np.array(list(entity_ids), dtype=np.int64)
     mh_array = np.array(list(microhaplotype_ids), dtype=np.int64)
     matrix = np.zeros((len(entity_array), len(mh_array)), dtype=np.bool_)
+
     entity_pos = {int(eid): i for i, eid in enumerate(entity_array.tolist())}
     mh_pos = {int(mid): i for i, mid in enumerate(mh_array.tolist())}
-
     for raw_mh_id, raw_entity_id in pairs:
         row = entity_pos.get(int(raw_entity_id))
         col = mh_pos.get(int(raw_mh_id))
@@ -178,23 +57,32 @@ def write_presence_lookup_artifact(
 
     packed = np.packbits(matrix, axis=1, bitorder="little")
     present_counts = matrix.sum(axis=1).astype(np.int64)
+    return mh_array, entity_array, packed, present_counts
 
-    np.savez_compressed(
-        artifact_path,
-        schema_version=np.array([ARTIFACT_SCHEMA_VERSION], dtype=np.int16),
-        entity_type=np.array([entity_type]),
-        entity_ids=entity_array,
-        microhaplotype_ids=mh_array,
-        packed_presence=packed,
-        present_counts=present_counts,
-        microhaplotype_count=np.array([len(mh_array)], dtype=np.int64),
-        bitorder=np.array(["little"]),
+
+def write_presence_artifact(
+    cursor,
+    pairs: Sequence[Tuple[int, int]],
+    microhaplotype_ids: Sequence[int],
+    entity_ids: Sequence[int],
+    *,
+    entity_type: str,
+    source_path: str,
+    species_id: Optional[int] = None,
+    project_id: Optional[int] = None,
+) -> Dict[str, object]:
+    """Store a presence matrix as packed bitmap rows and return its metadata."""
+    if entity_type not in ENTITY_TYPES:
+        raise ValueError("entity_type must be 'sample' or 'project'")
+
+    mh_array, entity_array, packed, present_counts = _pack_entity_rows(
+        pairs,
+        microhaplotype_ids,
+        entity_ids,
     )
-
+    artifact_size_bytes = int(packed.nbytes + mh_array.nbytes)
     metadata = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
-        "artifact_path": artifact_path,
-        "artifact_name": artifact_name,
         "entity_type": entity_type,
         "species_id": species_id,
         "project_id": project_id,
@@ -202,74 +90,147 @@ def write_presence_lookup_artifact(
         "source_sha256": _sha256_file(source_path) if os.path.exists(source_path) else "",
         "microhaplotype_count": int(len(mh_array)),
         "entity_count": int(len(entity_array)),
-        "presence_count": int(sum(present_counts.tolist())),
+        "presence_count": int(present_counts.sum()),
         "compression": DEFAULT_COMPRESSION,
+        "artifact_size_bytes": artifact_size_bytes,
     }
-    json_path = artifact_path + ".json"
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump(metadata, handle, indent=2, sort_keys=True)
-    metadata["metadata_path"] = json_path
-    metadata["artifact_size_bytes"] = os.path.getsize(artifact_path)
+
+    cursor.execute(
+        """
+        INSERT INTO presence_artifacts
+        (entity_type, species_id, project_id, source_path, source_sha256,
+         compression, schema_version, microhaplotype_count, entity_count,
+         presence_count, artifact_size_bytes, microhaplotype_ids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            entity_type,
+            species_id,
+            project_id,
+            source_path,
+            metadata["source_sha256"],
+            DEFAULT_COMPRESSION,
+            ARTIFACT_SCHEMA_VERSION,
+            metadata["microhaplotype_count"],
+            metadata["entity_count"],
+            metadata["presence_count"],
+            artifact_size_bytes,
+            mh_array.astype("<i8").tobytes(),
+        ),
+    )
+    artifact_id = int(cursor.lastrowid)
+    cursor.executemany(
+        """
+        INSERT INTO presence_bitmaps
+        (artifact_id, row_index, entity_id, present_count, packed_presence)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                artifact_id,
+                row_index,
+                int(entity_array[row_index]),
+                int(present_counts[row_index]),
+                packed[row_index].tobytes(),
+            )
+            for row_index in range(len(entity_array))
+        ],
+    )
+    metadata["id"] = artifact_id
     return metadata
 
 
-def read_entity_ids_for_microhaplotype(artifact_path: str, microhaplotype_id: int) -> List[int]:
-    """Return present entity IDs for one microhaplotype from a bitmap artifact."""
-    with np.load(artifact_path, allow_pickle=False) as data:
-        mh_ids = data["microhaplotype_ids"]
-        matches = np.where(mh_ids == int(microhaplotype_id))[0]
-        if matches.size == 0:
-            return []
-        row_idx = int(matches[0])
-        entity_ids = data["entity_ids"]
-        entity_count = int(data["entity_count"][0])
-        packed = data["packed_presence"][row_idx]
-        bits = np.unpackbits(packed, bitorder="little")[:entity_count]
-        present_positions = np.flatnonzero(bits)
-        return [int(entity_ids[pos]) for pos in present_positions.tolist()]
+def _cache_key(db, artifact_id: int) -> Tuple[str, int, int]:
+    # The file's mtime guards local dev, where a rebuilt database reuses IDs.
+    db_path = getattr(db, "db_path", None)
+    try:
+        version = os.stat(db_path).st_mtime_ns if db_path else 0
+    except OSError:
+        version = 0
+    return (str(db_path or id(db)), version, int(artifact_id))
 
 
-def read_microhaplotype_ids_for_entity(artifact_path: str, entity_id: int) -> List[int]:
-    """Return present microhaplotype IDs for one sample/project lookup artifact."""
-    with np.load(artifact_path, allow_pickle=False) as data:
-        entity_ids = data["entity_ids"]
-        matches = np.where(entity_ids == int(entity_id))[0]
-        if matches.size == 0:
-            return []
-        row_idx = int(matches[0])
-        microhaplotype_ids = data["microhaplotype_ids"]
-        microhaplotype_count = int(data["microhaplotype_count"][0])
-        packed = data["packed_presence"][row_idx]
-        bits = np.unpackbits(packed, bitorder="little")[:microhaplotype_count]
-        present_positions = np.flatnonzero(bits)
-        return [int(microhaplotype_ids[pos]) for pos in present_positions.tolist()]
+def clear_presence_cache() -> None:
+    """Drop all cached matrices (used by tests and after re-imports)."""
+    with _cache_lock:
+        _cache.clear()
 
 
-def load_lookup_artifact(artifact_path: str) -> Dict[str, object]:
-    """Load one entity-oriented lookup artifact for repeated row reads."""
-    with np.load(artifact_path, allow_pickle=False) as data:
-        entity_ids = data["entity_ids"].astype(np.int64, copy=True)
-        microhaplotype_ids = data["microhaplotype_ids"].astype(np.int64, copy=True)
-        packed_presence = data["packed_presence"].copy()
-        microhaplotype_count = int(data["microhaplotype_count"][0])
+def load_presence_artifact(db, artifact_id: int) -> Dict[str, object]:
+    """Return a decoded presence matrix, cached per worker process.
 
-    return {
+    Artifact rows are immutable once written (re-imports create new IDs), so
+    a cached matrix never goes stale.
+    """
+    key = _cache_key(db, artifact_id)
+    with _cache_lock:
+        cached = _cache.get(key)
+        if cached is not None:
+            _cache.move_to_end(key)
+            return cached
+
+    header_rows = db.execute_query(
+        """
+        SELECT microhaplotype_ids, microhaplotype_count
+        FROM presence_artifacts
+        WHERE id = ?
+        """,
+        (int(artifact_id),),
+    )
+    if not header_rows:
+        raise KeyError(f"Presence artifact {artifact_id} not found")
+    header = header_rows[0]
+    microhaplotype_count = int(header["microhaplotype_count"])
+    microhaplotype_ids = np.frombuffer(header["microhaplotype_ids"], dtype="<i8").astype(np.int64)
+
+    bitmap_rows = db.execute_query(
+        """
+        SELECT entity_id, packed_presence
+        FROM presence_bitmaps
+        WHERE artifact_id = ?
+        ORDER BY row_index
+        """,
+        (int(artifact_id),),
+    )
+    row_bytes = (microhaplotype_count + 7) // 8
+    entity_ids = np.array([int(row["entity_id"]) for row in bitmap_rows], dtype=np.int64)
+    if bitmap_rows:
+        packed_presence = np.frombuffer(
+            b"".join(bytes(row["packed_presence"]) for row in bitmap_rows),
+            dtype=np.uint8,
+        ).reshape(len(bitmap_rows), row_bytes)
+    else:
+        packed_presence = np.zeros((0, row_bytes), dtype=np.uint8)
+
+    artifact = {
+        "id": int(artifact_id),
         "entity_ids": entity_ids,
         "entity_index": {
             int(entity_id): index
             for index, entity_id in enumerate(entity_ids.tolist())
         },
         "microhaplotype_ids": microhaplotype_ids,
+        "microhaplotype_index": {
+            int(mid): index
+            for index, mid in enumerate(microhaplotype_ids.tolist())
+        },
         "packed_presence": packed_presence,
         "microhaplotype_count": microhaplotype_count,
     }
 
+    with _cache_lock:
+        _cache[key] = artifact
+        _cache.move_to_end(key)
+        while len(_cache) > max(1, config.PRESENCE_CACHE_MAX_ARTIFACTS):
+            _cache.popitem(last=False)
+    return artifact
 
-def read_microhaplotype_ids_from_loaded_lookup(
+
+def microhaplotype_ids_for_entity(
     artifact: Dict[str, object],
     entity_id: int,
 ) -> List[int]:
-    """Return microhaplotype IDs for an entity from a loaded lookup artifact."""
+    """Return microhaplotype IDs present for one sample/project."""
     row_idx = artifact["entity_index"].get(int(entity_id))
     if row_idx is None:
         return []
@@ -279,86 +240,84 @@ def read_microhaplotype_ids_from_loaded_lookup(
     packed = artifact["packed_presence"][row_idx]
     bits = np.unpackbits(packed, bitorder="little")[:microhaplotype_count]
     present_positions = np.flatnonzero(bits)
-    return [int(microhaplotype_ids[pos]) for pos in present_positions.tolist()]
+    return microhaplotype_ids[present_positions].tolist()
+
+
+def entity_ids_for_microhaplotype(
+    artifact: Dict[str, object],
+    microhaplotype_id: int,
+) -> List[int]:
+    """Return sample/project IDs that carry one microhaplotype."""
+    col_idx = artifact["microhaplotype_index"].get(int(microhaplotype_id))
+    if col_idx is None:
+        return []
+
+    column = artifact["packed_presence"][:, col_idx >> 3]
+    present = (column >> (col_idx & 7)) & 1
+    return artifact["entity_ids"][np.flatnonzero(present)].tolist()
 
 
 def ensure_presence_artifact_schema(cursor) -> None:
-    """Create lightweight SQL metadata/summary tables for artifact-backed presence."""
+    """Create the bitmap and summary tables when importing into an older DB."""
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.presence_artifacts', 'U') IS NULL
-        BEGIN
-            CREATE TABLE presence_artifacts (
-                id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
-                entity_type NVARCHAR(20) NOT NULL,
-                species_id INT NULL,
-                project_id INT NULL,
-                source_path NVARCHAR(1024) NOT NULL,
-                source_sha256 NVARCHAR(64),
-                artifact_path NVARCHAR(1024) NOT NULL,
-                metadata_path NVARCHAR(1024),
-                compression NVARCHAR(50) NOT NULL,
-                schema_version INT NOT NULL,
-                microhaplotype_count INT NOT NULL,
-                entity_count INT NOT NULL,
-                presence_count BIGINT NOT NULL,
-                artifact_size_bytes BIGINT NULL,
-                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-            )
-        END
+        CREATE TABLE IF NOT EXISTS presence_artifacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL CHECK (entity_type IN ('sample', 'project')),
+            species_id INTEGER,
+            project_id INTEGER,
+            source_path TEXT NOT NULL,
+            source_sha256 TEXT,
+            compression TEXT NOT NULL,
+            schema_version INTEGER NOT NULL,
+            microhaplotype_count INTEGER NOT NULL,
+            entity_count INTEGER NOT NULL,
+            presence_count INTEGER NOT NULL,
+            artifact_size_bytes INTEGER,
+            microhaplotype_ids BLOB NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
         """
     )
     cursor.execute(
         """
-        IF OBJECT_ID('dbo.microhaplotype_presence_summary', 'U') IS NULL
-        BEGIN
-            CREATE TABLE microhaplotype_presence_summary (
-                microhaplotype_id INT NOT NULL,
-                species_id INT NOT NULL,
-                entity_type NVARCHAR(20) NOT NULL,
-                present_count INT NOT NULL,
-                total_count INT NOT NULL,
-                frequency FLOAT NOT NULL,
-                artifact_id INT NULL,
-                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                PRIMARY KEY (microhaplotype_id, species_id, entity_type),
-                CONSTRAINT FK_presence_summary_microhaplotypes
-                    FOREIGN KEY (microhaplotype_id) REFERENCES microhaplotypes(id)
-            )
-        END
+        CREATE TABLE IF NOT EXISTS presence_bitmaps (
+            artifact_id INTEGER NOT NULL REFERENCES presence_artifacts(id) ON DELETE CASCADE,
+            row_index INTEGER NOT NULL,
+            entity_id INTEGER NOT NULL,
+            present_count INTEGER NOT NULL,
+            packed_presence BLOB NOT NULL,
+            PRIMARY KEY (artifact_id, row_index)
+        ) WITHOUT ROWID
         """
     )
-
-
-def record_presence_artifact(cursor, metadata: Dict[str, object]) -> Optional[int]:
-    """Insert artifact metadata and return the new artifact ID."""
     cursor.execute(
         """
-        INSERT INTO presence_artifacts
-        (entity_type, species_id, project_id, source_path, source_sha256,
-         artifact_path, metadata_path, compression, schema_version,
-         microhaplotype_count, entity_count, presence_count, artifact_size_bytes)
-        OUTPUT INSERTED.id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            metadata.get("entity_type"),
-            metadata.get("species_id"),
-            metadata.get("project_id"),
-            metadata.get("source_path"),
-            metadata.get("source_sha256"),
-            metadata.get("artifact_path"),
-            metadata.get("metadata_path"),
-            metadata.get("compression"),
-            metadata.get("schema_version"),
-            metadata.get("microhaplotype_count"),
-            metadata.get("entity_count"),
-            metadata.get("presence_count"),
-            metadata.get("artifact_size_bytes"),
-        ),
+        CREATE TABLE IF NOT EXISTS microhaplotype_presence_summary (
+            microhaplotype_id INTEGER NOT NULL REFERENCES microhaplotypes(id),
+            species_id INTEGER NOT NULL,
+            entity_type TEXT NOT NULL,
+            present_count INTEGER NOT NULL,
+            total_count INTEGER NOT NULL,
+            frequency REAL NOT NULL,
+            artifact_id INTEGER REFERENCES presence_artifacts(id),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (microhaplotype_id, species_id, entity_type)
+        )
+        """
     )
-    row = cursor.fetchone()
-    return int(row[0]) if row and row[0] is not None else None
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_presence_artifacts_entity "
+        "ON presence_artifacts(entity_type, species_id, project_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_presence_bitmaps_entity "
+        "ON presence_bitmaps(entity_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_presence_summary_species_entity "
+        "ON microhaplotype_presence_summary(species_id, entity_type)"
+    )
 
 
 def upsert_presence_summary(
@@ -385,68 +344,28 @@ def upsert_presence_summary(
         )
         for mid, present_count in counts_by_microhaplotype.items()
     ]
-    if entity_type == "sample":
-        merge_sql = """
-        MERGE microhaplotype_presence_summary AS target
-        USING (
-            SELECT
-                ? AS microhaplotype_id,
-                ? AS species_id,
-                ? AS entity_type,
-                ? AS present_count,
-                ? AS total_count,
-                ? AS frequency,
-                ? AS artifact_id
-        ) AS source
-        ON target.microhaplotype_id = source.microhaplotype_id
-           AND target.species_id = source.species_id
-           AND target.entity_type = source.entity_type
-        WHEN MATCHED THEN
-            UPDATE SET
-                present_count = target.present_count + source.present_count,
-                total_count = source.total_count,
-                frequency = source.frequency,
-                artifact_id = source.artifact_id,
-                updated_at = SYSUTCDATETIME()
-        WHEN NOT MATCHED THEN
-            INSERT (microhaplotype_id, species_id, entity_type, present_count,
-                    total_count, frequency, artifact_id)
-            VALUES (source.microhaplotype_id, source.species_id, source.entity_type,
-                    source.present_count, source.total_count, source.frequency,
-                    source.artifact_id);
-        """
-    else:
-        merge_sql = """
-        MERGE microhaplotype_presence_summary AS target
-        USING (
-            SELECT
-                ? AS microhaplotype_id,
-                ? AS species_id,
-                ? AS entity_type,
-                ? AS present_count,
-                ? AS total_count,
-                ? AS frequency,
-                ? AS artifact_id
-        ) AS source
-        ON target.microhaplotype_id = source.microhaplotype_id
-           AND target.species_id = source.species_id
-           AND target.entity_type = source.entity_type
-        WHEN MATCHED THEN
-            UPDATE SET
-                present_count = source.present_count,
-                total_count = source.total_count,
-                frequency = source.frequency,
-                artifact_id = source.artifact_id,
-                updated_at = SYSUTCDATETIME()
-        WHEN NOT MATCHED THEN
-            INSERT (microhaplotype_id, species_id, entity_type, present_count,
-                    total_count, frequency, artifact_id)
-            VALUES (source.microhaplotype_id, source.species_id, source.entity_type,
-                    source.present_count, source.total_count, source.frequency,
-                    source.artifact_id);
-        """
-
-    cursor.executemany(merge_sql, params)
+    # Sample imports arrive one project file at a time, so their counts add
+    # up; a project matrix covers every project and replaces the old counts.
+    present_count_update = (
+        "microhaplotype_presence_summary.present_count + excluded.present_count"
+        if entity_type == "sample"
+        else "excluded.present_count"
+    )
+    cursor.executemany(
+        f"""
+        INSERT INTO microhaplotype_presence_summary
+        (microhaplotype_id, species_id, entity_type, present_count,
+         total_count, frequency, artifact_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (microhaplotype_id, species_id, entity_type) DO UPDATE SET
+            present_count = {present_count_update},
+            total_count = excluded.total_count,
+            frequency = excluded.frequency,
+            artifact_id = excluded.artifact_id,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        params,
+    )
 
     if entity_type == "sample":
         cursor.execute(
@@ -464,14 +383,14 @@ def upsert_presence_summary(
                         FROM samples
                         WHERE samples.species_id = microhaplotype_presence_summary.species_id
                     ) > 0
-                    THEN CAST(present_count AS FLOAT) / CAST((
+                    THEN CAST(present_count AS REAL) / (
                         SELECT COUNT(*)
                         FROM samples
                         WHERE samples.species_id = microhaplotype_presence_summary.species_id
-                    ) AS FLOAT)
+                    )
                     ELSE 0.0
                 END,
-                updated_at = SYSUTCDATETIME()
+                updated_at = CURRENT_TIMESTAMP
             WHERE species_id = ? AND entity_type = 'sample'
             """,
             (int(species_id),),

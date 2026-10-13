@@ -26,18 +26,18 @@ Microhaplotype data is often scattered across spreadsheets, local databases, and
 - Connect microhaplotypes to samples, breeding projects, institutions, and collaborators
 - Analyze microhaplotype accumulation and sharing across projects
 - Import FASTA, metadata, presence/absence, project, and variant data
-- Authenticate users through ORCID with role-based administration
+- Authenticate users through ORCID against an allowlist
 
 HapSearch is designed for breeders, quantitative geneticists, researchers, data curators, bioinformaticians, and project collaborators.
 
 ## Project overview
 
-HapSearch is built with Python, Flask, Dash, Plotly, BioPython, and Microsoft SQL Server. The repository includes the web application, database layer, data-import tools, alignment utilities, and automated tests.
+HapSearch is built with Python, Flask, Dash, Plotly, BioPython, and SQLite. The repository includes the web application, database layer, data-import tools, alignment utilities, and automated tests.
 
 ```text
 alignment/   Sequence alignment and variant annotation
 auth/        ORCID authentication and sessions
-database/    Data access and presence/absence artifacts
+database/    Data access and presence/absence bitmaps
 pages/       Dash views and exploration workflows
 scripts/     Database initialization and data imports
 tests/       Automated tests
@@ -45,10 +45,11 @@ tests/       Automated tests
 
 ## Setup and development
 
-The containerized environment uses Docker Compose with Microsoft SQL Server. Direct local development requires Python 3.13+ and ODBC Driver 18 for SQL Server. See the [SQL Server setup notes](MSSQL_SETUP.md) and [.env example](.env.example) for configuration details.
+All data lives in one SQLite file (`data/hapsearch.db` by default), rebuilt with `scripts/build_database.py` from the inputs in [alfalfa_haplotype_db](https://github.com/Breeding-Insight/alfalfa_haplotype_db) (see [Updating data](docs/updating-data.md)). Local development requires Python 3.13+; the Docker Compose files mount the database read-write. In production the file ships read-only inside the container image on Google Cloud Run. See the [Cloud Run deployment guide](docs/cloud-run.md) and [.env example](.env.example) for configuration details.
 
 ## Documentation
 
 - [Product plan and roadmap](HaploSearch_Plan_Document.md)
-- [Microsoft SQL Server setup notes](MSSQL_SETUP.md)
+- [Updating data and publishing a new version](docs/updating-data.md)
+- [Cloud Run deployment](docs/cloud-run.md)
 - [Visualization color system](design/color_palettes.md)

@@ -52,15 +52,11 @@ class SampleImporter:
             for _, row in df.iterrows():
                 try:
                     cursor.execute("""
-                        IF NOT EXISTS (SELECT 1 FROM projects WHERE project_code = ?)
-                        BEGIN
-                            INSERT INTO projects
-                            (project_code, project_name, pi_name, pi_email,
-                             pi_institution, pi_department, description, start_date)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        END
+                        INSERT OR IGNORE INTO projects
+                        (project_code, project_name, pi_name, pi_email,
+                         pi_institution, pi_department, description, start_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        row['project_code'],
                         row['project_code'],
                         row['project_name'],
                         row.get('pi_name'),
@@ -129,15 +125,11 @@ class SampleImporter:
 
                     # Insert sample
                     cursor.execute("""
-                        IF NOT EXISTS (SELECT 1 FROM samples WHERE sample_code = ?)
-                        BEGIN
-                            INSERT INTO samples
-                            (sample_code, project_id, species_id, sample_type,
-                             collection_date, collection_location)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        END
+                        INSERT OR IGNORE INTO samples
+                        (sample_code, project_id, species_id, sample_type,
+                         collection_date, collection_location)
+                        VALUES (?, ?, ?, ?, ?, ?)
                     """, (
-                        row['sample_code'],
                         row['sample_code'],
                         project_id,
                         species_id,
@@ -206,16 +198,10 @@ class SampleImporter:
 
                     # Insert association
                     cursor.execute("""
-                        IF NOT EXISTS (SELECT 1 FROM microhaplotype_samples
-                                      WHERE microhaplotype_id = ? AND sample_id = ?)
-                        BEGIN
-                            INSERT INTO microhaplotype_samples
-                            (microhaplotype_id, sample_id, read_count)
-                            VALUES (?, ?, ?)
-                        END
+                        INSERT OR IGNORE INTO microhaplotype_samples
+                        (microhaplotype_id, sample_id, read_count)
+                        VALUES (?, ?, ?)
                     """, (
-                        haplotype_id,
-                        sample_id,
                         haplotype_id,
                         sample_id,
                         row.get('read_count', 0)

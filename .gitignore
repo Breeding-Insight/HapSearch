@@ -69,3 +69,7 @@ build/
 
 # Source design files not needed by the app at runtime
 *.psd
+
+# Database builds
+.build-cache/
+*.db.building

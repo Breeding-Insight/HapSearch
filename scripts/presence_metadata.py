@@ -513,7 +513,6 @@ def get_or_upsert_project(cursor, fields: Dict[str, str]) -> Tuple[int, bool, bo
         INSERT INTO projects
         (project_code, project_name, pi_name, pi_email,
          pi_institution, pi_department, description, start_date)
-        OUTPUT INSERTED.id
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
@@ -527,8 +526,7 @@ def get_or_upsert_project(cursor, fields: Dict[str, str]) -> Tuple[int, bool, bo
             fields["start_date"] or None,
         ),
     )
-    inserted = cursor.fetchone()
-    project_id = int(inserted[0]) if inserted and inserted[0] is not None else 0
+    project_id = int(cursor.lastrowid or 0)
 
     if project_id <= 0:
         raise RuntimeError(f"Failed to resolve inserted project ID for '{project_code}'")
@@ -572,7 +570,6 @@ def get_or_upsert_contact(
     cursor.execute(
         """
         INSERT INTO contacts (full_name, email, institution, department, location)
-        OUTPUT INSERTED.id
         VALUES (?, ?, ?, ?, ?)
         """,
         (
@@ -583,8 +580,7 @@ def get_or_upsert_contact(
             contact.get("pi_location", ""),
         ),
     )
-    inserted = cursor.fetchone()
-    contact_id = int(inserted[0]) if inserted and inserted[0] is not None else 0
+    contact_id = int(cursor.lastrowid or 0)
 
     if contact_id <= 0:
         raise RuntimeError(f"Failed to resolve inserted contact ID for '{full_name}'")
