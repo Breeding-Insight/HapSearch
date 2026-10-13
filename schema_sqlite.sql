@@ -148,8 +148,7 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT,
     role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    last_login TEXT
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_chromosomes_species ON chromosomes(species_id);

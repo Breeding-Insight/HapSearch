@@ -4,7 +4,9 @@ Users live in Firestore on Cloud Run (``users/{orcid_id}``, the same document
 shape as HapApp and AlloMate), because the SQLite file there is read-only
 inside the image. Local development and the VM keep using the SQLite
 ``users`` table. Both backends expose the same methods and return the same
-dict shape, so the login check, Admin tab and CLI do not care which is used.
+dict shape, so the login check and CLI do not care which is used. The app
+itself only reads; changes are made with scripts/manage_users.py or the
+Firestore console.
 """
 
 import re
@@ -63,7 +65,6 @@ def _user_record(values: Dict[str, Any], orcid_id: str) -> Dict[str, Any]:
         "role": values.get("role") or "user",
         "is_active": bool(values.get("is_active", False)),
         "created_at": _format_time(values.get("created_at")),
-        "last_login": _format_time(values.get("last_login")),
     }
 
 
@@ -87,8 +88,7 @@ class SqliteUserStore:
                 email TEXT,
                 role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
                 is_active INTEGER DEFAULT 1,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                last_login TEXT
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -100,11 +100,6 @@ class SqliteUserStore:
             "SELECT * FROM users WHERE orcid_id = ? AND is_active = 1", (orcid_id,)
         )
         return _user_record(rows[0], orcid_id) if rows else None
-
-    def record_login(self, orcid_id: str) -> None:
-        self.db.execute_update(
-            "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE orcid_id = ?", (orcid_id,)
-        )
 
     def list_users(self) -> List[Dict[str, Any]]:
         if not self.db.table_exists("users"):
@@ -130,23 +125,9 @@ class SqliteUserStore:
             "UPDATE users SET is_active = ? WHERE orcid_id = ?", (1 if is_active else 0, orcid_id)
         ) > 0
 
-    def toggle_active(self, orcid_id: str) -> bool:
-        return self.db.execute_update(
-            "UPDATE users SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END "
-            "WHERE orcid_id = ?",
-            (orcid_id,),
-        ) > 0
-
     def set_role(self, orcid_id: str, role: str) -> bool:
         return self.db.execute_update(
             "UPDATE users SET role = ? WHERE orcid_id = ?", (_validate_role(role), orcid_id)
-        ) > 0
-
-    def toggle_role(self, orcid_id: str) -> bool:
-        return self.db.execute_update(
-            "UPDATE users SET role = CASE WHEN role = 'admin' THEN 'user' ELSE 'admin' END "
-            "WHERE orcid_id = ?",
-            (orcid_id,),
         ) > 0
 
     def remove_user(self, orcid_id: str) -> bool:
@@ -193,10 +174,6 @@ class FirestoreUserStore:
             return None
         return _user_record(values, orcid_id)
 
-    def record_login(self, orcid_id: str) -> None:
-        if self._get(orcid_id) is not None:
-            self._doc(orcid_id).update({"last_login": datetime.now(timezone.utc)})
-
     def list_users(self) -> List[Dict[str, Any]]:
         users = [
             _user_record(snapshot.to_dict() or {}, snapshot.id)
@@ -206,8 +183,7 @@ class FirestoreUserStore:
 
     def add_user(self, orcid_id: str, display_name: str = None, email: str = None,
                  role: str = "user", *, is_active: bool = True,
-                 created_at: Optional[datetime] = None,
-                 last_login: Optional[datetime] = None) -> Dict[str, Any]:
+                 created_at: Optional[datetime] = None) -> Dict[str, Any]:
         orcid_id = normalize_orcid(orcid_id)
         _validate_role(role)
         values = {
@@ -217,11 +193,10 @@ class FirestoreUserStore:
             "role": role,
             "is_active": bool(is_active),
             "created_at": created_at or datetime.now(timezone.utc),
-            "last_login": last_login,
         }
         try:
-            # create() fails if the document exists, so two admins adding the
-            # same person cannot overwrite each other.
+            # create() fails if the document exists, so adding someone twice
+            # cannot overwrite their existing record.
             self._doc(orcid_id).create(values)
         except _FirestoreConflict as exc:
             raise UserExistsError(f"User with ORCID {orcid_id} already exists.") from exc
@@ -236,23 +211,8 @@ class FirestoreUserStore:
     def set_active(self, orcid_id: str, is_active: bool) -> bool:
         return self._update(orcid_id, {"is_active": bool(is_active)})
 
-    def toggle_active(self, orcid_id: str) -> bool:
-        values = self._get(orcid_id)
-        if values is None:
-            return False
-        self._doc(orcid_id).update({"is_active": not values.get("is_active", False)})
-        return True
-
     def set_role(self, orcid_id: str, role: str) -> bool:
         return self._update(orcid_id, {"role": _validate_role(role)})
-
-    def toggle_role(self, orcid_id: str) -> bool:
-        values = self._get(orcid_id)
-        if values is None:
-            return False
-        new_role = "user" if values.get("role") == "admin" else "admin"
-        self._doc(orcid_id).update({"role": new_role})
-        return True
 
     def remove_user(self, orcid_id: str) -> bool:
         if self._get(orcid_id) is None:

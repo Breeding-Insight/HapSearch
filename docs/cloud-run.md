@@ -3,9 +3,9 @@
 HapSearch runs on Cloud Run as a scale-to-zero service. All research data lives in
 one SQLite file that ships inside the container image, so the service needs no
 database server, no Cloud SQL connection and no VPC connector. The ORCID allowlist
-lives in Firestore, like HapApp and AlloMate, because it changes at runtime (Admin tab,
-last sign-in) and the image's SQLite file is read-only. Nothing is billed while the
-service is idle except the stored image and Firestore storage.
+lives in Firestore, like HapApp and AlloMate, so people can be added or removed
+without rebuilding the image. Nothing is billed while the service is idle except the
+stored image and Firestore storage.
 
 ## How the data gets into the image
 
@@ -59,8 +59,8 @@ location: us-west1
 security rules: deny all reads and writes from browsers and mobile clients
 ```
 
-HapSearch reads and writes it only from the Python server through Google IAM. Each
-allowed person is a `users/{orcid_id}` document:
+HapSearch only reads it, from the Python server through Google IAM. Each allowed
+person is a `users/{orcid_id}` document:
 
 ```json
 {
@@ -72,16 +72,24 @@ allowed person is a `users/{orcid_id}` document:
 }
 ```
 
-The app also keeps `created_at` and `last_login`. Admins manage everyone else from the
-Admin tab. To seed the first admin, or to copy the allowlist from the old database,
-run the CLI with your own Application Default Credentials
+`created_at` is set when someone is added; `role` is kept for consistency with the
+other BI apps but HapSearch does not use it. Set `is_active` to `false` to remove
+access; it takes effect at the person's next sign-in.
+
+There is no user-management page in the app. Edit the documents in the Firestore
+console, or use the CLI with your own Application Default Credentials
 (`gcloud auth application-default login`):
 
 ```bash
 export GOOGLE_CLOUD_PROJECT=PROJECT_ID FIRESTORE_DATABASE=hapsearch-db
-python scripts/manage_users.py --store firestore add --orcid 0000-0000-0000-0000 --name "Example User" --role admin
+python scripts/manage_users.py --store firestore add --orcid 0000-0000-0000-0000 --name "Example User"
+python scripts/manage_users.py --store firestore list
+python scripts/manage_users.py --store firestore deactivate --orcid 0000-0000-0000-0000
 python scripts/manage_users.py --store firestore copy-from-sqlite
 ```
+
+Sign-ins are not stored. Each successful sign-in writes one log line,
+`Sign-in: orcid_id=...`, which you can search in Cloud Logging.
 
 `copy-from-sqlite` reads the `users` table from `SQLITE_DB_PATH` (for example the
 output of the SQL Server migration) and skips anyone already in Firestore.
@@ -95,7 +103,7 @@ stops with a clear message if the database name or IAM role is wrong.
 
 Create a service account such as `hapsearch-cloud-run` and grant it:
 
-- `roles/datastore.user` on the project (the Admin tab and sign-in write to Firestore)
+- `roles/datastore.viewer` on the project (read-only Firestore access)
 - `roles/secretmanager.secretAccessor` on each HapSearch secret
 
 Attach it as the Cloud Run service identity. Do not create a JSON key.

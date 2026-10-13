@@ -60,19 +60,18 @@ def cmd_list(store, args):
         return
 
     # Simple table output
-    header = f"{'ORCID iD':<22} {'Name':<25} {'Email':<30} {'Role':<8} {'Active':<8} {'Last Login'}"
+    header = f"{'ORCID iD':<22} {'Name':<25} {'Email':<30} {'Role':<8} {'Active':<8} {'Added'}"
     print(header)
     print("-" * len(header))
     for u in users:
         active = "Yes" if u['is_active'] else "No"
-        last_login = u['last_login'] or 'Never'
         print(
             f"{u['orcid_id']:<22} "
             f"{(u['display_name'] or ''):<25} "
             f"{(u['email'] or ''):<30} "
             f"{u['role']:<8} "
             f"{active:<8} "
-            f"{last_login}"
+            f"{u['created_at'] or ''}"
         )
     print(f"\nTotal: {len(users)} user(s)")
 
@@ -121,7 +120,6 @@ def cmd_copy_from_sqlite(store, args):
                 user["role"],
                 is_active=user["is_active"],
                 created_at=_parse_sqlite_time(user["created_at"]),
-                last_login=_parse_sqlite_time(user["last_login"]),
             )
             copied += 1
         except UserExistsError:

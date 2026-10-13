@@ -1,12 +1,14 @@
 """ORCID OAuth2 Flask routes for authentication"""
 
+import logging
 import secrets
 import requests as http_requests
 from flask import Blueprint, redirect, request, session, url_for, render_template
 import config
-from auth.session import lookup_user, update_last_login, start_local_dev_session
+from auth.session import lookup_user, start_local_dev_session
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
+logger = logging.getLogger(__name__)
 
 
 @auth_bp.route('/login')
@@ -101,8 +103,9 @@ def callback():
     session['user_name'] = user.get('display_name') or display_name
     session['user_role'] = user.get('role', 'user')
 
-    # Update last login timestamp
-    update_last_login(orcid_id)
+    # Sign-ins go to the logs (Cloud Logging on Cloud Run), not the user store,
+    # so the service only needs read access to Firestore.
+    logger.info("Sign-in: orcid_id=%s", orcid_id)
 
     return redirect('/app/')
 

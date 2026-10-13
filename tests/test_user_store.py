@@ -109,7 +109,7 @@ class UserStoreContract:
     def test_deactivated_user_cannot_sign_in(self):
         self.store.add_user(ORCID_A)
 
-        self.assertTrue(self.store.toggle_active(ORCID_A))
+        self.assertTrue(self.store.set_active(ORCID_A, False))
         self.assertIsNone(self.store.get_active_user(ORCID_A))
         self.assertTrue(self.store.set_active(ORCID_A, True))
         self.assertIsNotNone(self.store.get_active_user(ORCID_A))
@@ -117,28 +117,23 @@ class UserStoreContract:
     def test_role_changes(self):
         self.store.add_user(ORCID_A)
 
-        self.assertTrue(self.store.toggle_role(ORCID_A))
+        self.assertTrue(self.store.set_role(ORCID_A, "admin"))
         self.assertEqual(self.store.get_active_user(ORCID_A)["role"], "admin")
-        self.assertTrue(self.store.set_role(ORCID_A, "user"))
-        self.assertEqual(self.store.get_active_user(ORCID_A)["role"], "user")
 
-    def test_record_login_and_list(self):
+    def test_list_users(self):
         self.store.add_user(ORCID_A, "Jane Doe")
         self.store.add_user(ORCID_B, "Lab Member")
 
-        self.store.record_login(ORCID_A)
         users = {user["orcid_id"]: user for user in self.store.list_users()}
 
         self.assertEqual(set(users), {ORCID_A, ORCID_B})
-        self.assertIsNotNone(users[ORCID_A]["last_login"])
-        self.assertIsNone(users[ORCID_B]["last_login"])
+        self.assertEqual(users[ORCID_B]["display_name"], "Lab Member")
+        self.assertIsNotNone(users[ORCID_A]["created_at"])
 
     def test_missing_users_report_not_found(self):
-        self.assertFalse(self.store.toggle_active(ORCID_A))
-        self.assertFalse(self.store.toggle_role(ORCID_A))
+        self.assertFalse(self.store.set_active(ORCID_A, False))
         self.assertFalse(self.store.set_role(ORCID_A, "admin"))
         self.assertFalse(self.store.remove_user(ORCID_A))
-        self.store.record_login(ORCID_A)  # no error for unknown users
 
     def test_remove_user(self):
         self.store.add_user(ORCID_A)

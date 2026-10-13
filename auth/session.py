@@ -38,11 +38,6 @@ def is_authenticated():
     return session.get('orcid_id') is not None
 
 
-def is_admin():
-    """Check if the current user is an admin."""
-    return is_authenticated() and session.get('user_role') == 'admin'
-
-
 def require_login(f):
     """Flask route decorator that redirects to landing page if not logged in."""
     @wraps(f)
@@ -64,11 +59,3 @@ def lookup_user(orcid_id):
     except Exception:
         logger.exception("User lookup failed for %s", orcid_id)
         return None
-
-
-def update_last_login(orcid_id):
-    """Update last_login timestamp for a user."""
-    try:
-        get_user_store().record_login(orcid_id)
-    except Exception:
-        logger.warning("Could not record last login for %s", orcid_id, exc_info=True)

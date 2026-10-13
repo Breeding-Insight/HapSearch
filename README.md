@@ -26,7 +26,7 @@ Microhaplotype data is often scattered across spreadsheets, local databases, and
 - Connect microhaplotypes to samples, breeding projects, institutions, and collaborators
 - Analyze microhaplotype accumulation and sharing across projects
 - Import FASTA, metadata, presence/absence, project, and variant data
-- Authenticate users through ORCID with role-based administration
+- Authenticate users through ORCID against an allowlist
 
 HapSearch is designed for breeders, quantitative geneticists, researchers, data curators, bioinformaticians, and project collaborators.
 
