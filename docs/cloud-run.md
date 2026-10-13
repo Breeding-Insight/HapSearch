@@ -7,6 +7,30 @@ lives in Firestore, like HapApp and AlloMate, so people can be added or removed
 without rebuilding the image. Nothing is billed while the service is idle except the
 stored image and Firestore storage.
 
+## First-time setup
+
+1. **Run the setup script in Cloud Shell** (console.cloud.google.com, the `>_`
+   button; it already has `gcloud` and your login), in the same project as HapApp
+   and AlloMate:
+
+   ```bash
+   git clone --branch cloud_run https://github.com/Breeding-Insight/HapSearch.git
+   cd HapSearch && bash scripts/setup_cloud_run.sh
+   ```
+
+   It is safe to re-run. It creates the Artifact Registry repository (keeping the
+   last 5 images), the `hapsearch-db` Firestore database, the app and Cloud Build
+   service accounts with only the roles below, and the secrets. It copies the
+   shared ORCID credentials from AlloMate's or HapApp's secrets when present, asks
+   for a read-only GitHub token for the data repository, and can add the first
+   allowlisted user.
+2. **Connect GitHub and create the trigger** in Cloud Build (the script prints the
+   exact settings): manual invocation, `Breeding-Insight/HapSearch`, `cloudbuild.yaml`,
+   service account `hapsearch-cloud-build`.
+3. **Run the trigger.** The first run creates the service, fully configured.
+4. **Add the ORCID redirect URI** `https://hapsearch-PROJECT_NUMBER.us-west1.run.app/auth/callback`
+   to the shared BI ORCID application, then open `/health` and sign in.
+
 ## How the data gets into the image
 
 The database is rebuilt from scratch from the files in
@@ -85,14 +109,17 @@ The store is chosen by `HAPSEARCH_USER_STORE`. It defaults to `firestore` on Clo
 the VM keep using the `users` table. With Firestore, startup performs one read and
 stops with a clear message if the database name or IAM role is wrong.
 
-## Service identity
+## Service identities
 
-Create a service account such as `hapsearch-cloud-run` and grant it:
+`scripts/setup_cloud_run.sh` creates `hapsearch-cloud-run`, the app's identity, with:
 
 - `roles/datastore.viewer` on the project (read-only Firestore access)
-- `roles/secretmanager.secretAccessor` on each HapSearch secret
+- `roles/secretmanager.secretAccessor` on the session key and ORCID secrets
 
-Attach it as the Cloud Run service identity. Do not create a JSON key.
+and `hapsearch-cloud-build`, the trigger's identity, with `roles/run.admin`,
+`roles/artifactregistry.writer`, `roles/logging.logWriter`, permission to deploy as
+`hapsearch-cloud-run`, and access to the `hapsearch-github-token` secret only. No JSON
+keys are created.
 
 ## Service settings
 
@@ -105,30 +132,9 @@ Attach it as the Cloud Run service identity. Do not create a JSON key.
 - `GET /health` answers `200` without touching the database, for the landing page's
   wake-up script; `/robots.txt` disallows all crawling
 
-Example deployment, after replacing the uppercase values:
-
-```bash
-gcloud run deploy hapsearch \
-  --source . \
-  --region=us-west1 \
-  --allow-unauthenticated \
-  --service-account=hapsearch-cloud-run@PROJECT_ID.iam.gserviceaccount.com \
-  --port=8080 \
-  --cpu=1 \
-  --memory=1Gi \
-  --cpu-throttling \
-  --cpu-boost \
-  --min-instances=0 \
-  --max-instances=3 \
-  --execution-environment=gen2 \
-  --set-env-vars="APP_ENV=production,DEBUG_MODE=false,TLS_ENABLED=false,FIRESTORE_DATABASE=hapsearch-db,GOOGLE_CLOUD_PROJECT=PROJECT_ID,HAPSEARCH_LANDING_URL=https://breeding-insight.github.io/HapSearch/" \
-  --set-secrets="SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest"
-```
-
-Deploy through the Cloud Build trigger (`cloudbuild.yaml`), which builds the
-database first. `gcloud run deploy --source .` also works after building
-`data/hapsearch.db` locally; `.gcloudignore` keeps that file and leaves out the
-raw import files.
+These settings, the environment variables and the secret references all live in
+the deploy step of `cloudbuild.yaml`, so every run applies them. Set
+`_LANDING_URL` on the trigger once the GitHub Pages landing page exists.
 
 Cloud Run terminates HTTPS, so keep `TLS_ENABLED=false`. The ORCID redirect URI must be
 `https://YOUR-SERVICE-URL/auth/callback`.

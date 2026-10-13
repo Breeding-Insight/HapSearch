@@ -2,14 +2,17 @@
 # deploys the app. Run it manually from the Cloud Build trigger; set _DATA_REF
 # to the data repository tag (or branch) to publish. See docs/updating-data.md.
 #
-# Needs a Secret Manager secret "hapsearch-github-token": a GitHub token with
-# read access to the data repository, available to the Cloud Build account.
+# Everything it needs (secrets, service accounts, Firestore, Artifact Registry)
+# is created once by scripts/setup_cloud_run.sh; see docs/cloud-run.md.
 substitutions:
   _REGION: us-west1
   _REPOSITORY: hapsearch
   _SERVICE: hapsearch
   _DATA_REPO: Breeding-Insight/alfalfa_haplotype_db
   _DATA_REF: master
+  _FIRESTORE_DATABASE: hapsearch-db
+  # Public GitHub Pages landing page; empty serves the built-in one.
+  _LANDING_URL: ""
 
 steps:
   # 1. Clone the data repository. The token is sent as an HTTP header so it
@@ -59,8 +62,9 @@ steps:
       - push
       - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
 
-  # The data version is recorded on the revision so the console shows what
-  # each revision serves.
+  # Every service setting lives here, so the first run creates a fully
+  # configured service and later runs keep it that way. The data version is
+  # recorded on the revision so the console shows what each revision serves.
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
@@ -71,7 +75,18 @@ steps:
       - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
       - --region=${_REGION}
       - --platform=managed
-      - --update-env-vars=HAPSEARCH_DATA_VERSION=${_DATA_REF}
+      - --service-account=hapsearch-cloud-run@${PROJECT_ID}.iam.gserviceaccount.com
+      - --allow-unauthenticated
+      - --port=8080
+      - --cpu=1
+      - --memory=1Gi
+      - --cpu-throttling
+      - --cpu-boost
+      - --min-instances=0
+      - --max-instances=3
+      - --execution-environment=gen2
+      - --update-env-vars=APP_ENV=production,DEBUG_MODE=false,TLS_ENABLED=false,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},HAPSEARCH_LANDING_URL=${_LANDING_URL},HAPSEARCH_DATA_VERSION=${_DATA_REF}
+      - --update-secrets=SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest
       - --quiet
 
 availableSecrets:
