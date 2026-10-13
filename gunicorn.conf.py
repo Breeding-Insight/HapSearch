@@ -3,7 +3,9 @@
 import os
 
 
-bind = f"{os.getenv('APP_HOST', '0.0.0.0')}:{os.getenv('APP_PORT', '5000')}"
+# Cloud Run injects PORT; local compose files set APP_PORT.
+_port = os.getenv("PORT") or os.getenv("APP_PORT", "5000")
+bind = f"{os.getenv('APP_HOST', '0.0.0.0')}:{_port}"
 
 # Multiple threaded workers keep the site available when a request is slow or
 # a worker exits. Every value can be tuned per environment without rebuilding.

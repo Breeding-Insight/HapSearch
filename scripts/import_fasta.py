@@ -206,8 +206,6 @@ class FastaImporter:
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-            if hasattr(cursor, "fast_executemany"):
-                cursor.fast_executemany = True
 
             # Cache for chromosomes and markers to avoid repeated lookups
             chrom_cache = {}
@@ -260,12 +258,11 @@ class FastaImporter:
                             cursor.execute(
                                 """
                                 INSERT INTO chromosomes (species_id, chromosome_name)
-                                OUTPUT INSERTED.id
                                 VALUES (?, ?)
                                 """,
                                 (species_id, chrom_key)
                             )
-                            chrom_id = int(cursor.fetchone()[0])
+                            chrom_id = int(cursor.lastrowid)
                         if chrom_id is None:
                             raise ValueError(f"Failed to resolve chromosome_id for '{chrom_key}'")
                         chrom_cache[chrom_key] = chrom_id
@@ -290,7 +287,6 @@ class FastaImporter:
                                 """
                                 INSERT INTO markers (marker_id, chromosome_id, position_start,
                                                    position_end, description)
-                                OUTPUT INSERTED.id
                                 VALUES (?, ?, ?, ?, ?)
                                 """,
                                 (
@@ -301,7 +297,7 @@ class FastaImporter:
                                     header_info['description']
                                 )
                             )
-                            marker_db_id = int(cursor.fetchone()[0])
+                            marker_db_id = int(cursor.lastrowid)
                         if marker_db_id is None:
                             raise ValueError(
                                 f"Failed to resolve marker_id for '{header_info['marker_id']}'"
@@ -403,6 +399,7 @@ Example usage:
         # Update chromosome counts
         from database.db_manager import update_chromosome_counts
         update_chromosome_counts(importer.db)
+        importer.db.optimize()
 
         print("\nDatabase updated successfully!")
         sys.exit(0)

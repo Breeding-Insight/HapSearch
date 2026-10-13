@@ -7,10 +7,9 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
-    read_entity_ids_for_microhaplotype,
-    read_microhaplotype_ids_for_entity,
-    load_lookup_artifact,
-    read_microhaplotype_ids_from_loaded_lookup,
+    entity_ids_for_microhaplotype,
+    load_presence_artifact,
+    microhaplotype_ids_for_entity,
 )
 
 _PROJECT_PREFIX_RE = re.compile(r'^(P\d+)')
@@ -91,28 +90,27 @@ def _get_microhaplotype_ids_for_sample_filter_artifacts(
         return []
 
     artifact_query = """
-        SELECT artifact_path
+        SELECT id
         FROM presence_artifacts
-        WHERE entity_type = 'sample_lookup'
+        WHERE entity_type = 'sample'
     """
     artifact_params: List[Any] = []
     if species_id:
         artifact_query += " AND species_id = ?"
         artifact_params.append(species_id)
     artifact_rows = db.execute_query(artifact_query, tuple(artifact_params))
-    artifact_paths = [row["artifact_path"] for row in artifact_rows if row.get("artifact_path")]
-    if not artifact_paths:
+    artifact_ids = [int(row["id"]) for row in artifact_rows if row.get("id") is not None]
+    if not artifact_ids:
         return []
 
     microhaplotype_ids = set()
-    for artifact_path in artifact_paths:
+    for artifact_id in artifact_ids:
+        try:
+            artifact = load_presence_artifact(db, artifact_id)
+        except Exception:
+            continue
         for sample_id in sample_ids:
-            try:
-                microhaplotype_ids.update(
-                    read_microhaplotype_ids_for_entity(artifact_path, sample_id)
-                )
-            except Exception:
-                continue
+            microhaplotype_ids.update(microhaplotype_ids_for_entity(artifact, sample_id))
 
     return sorted(microhaplotype_ids)
 
@@ -157,7 +155,7 @@ def _get_entity_ids_for_haplotype_artifacts(
     artifact_query = """
         SELECT
             m.id AS microhaplotype_id,
-            pa.artifact_path
+            pa.id AS artifact_id
         FROM microhaplotypes m
         JOIN markers mk ON mk.id = m.marker_id
         JOIN chromosomes c ON c.id = mk.chromosome_id
@@ -169,16 +167,14 @@ def _get_entity_ids_for_haplotype_artifacts(
     """
     artifact_rows = db.execute_query(artifact_query, (entity_type, haplotype_name))
     entity_ids = set()
-    for artifact in artifact_rows:
+    for row in artifact_rows:
         try:
-            entity_ids.update(
-                read_entity_ids_for_microhaplotype(
-                    artifact["artifact_path"],
-                    int(artifact["microhaplotype_id"]),
-                )
-            )
+            artifact = load_presence_artifact(db, int(row["artifact_id"]))
         except Exception:
             continue
+        entity_ids.update(
+            entity_ids_for_microhaplotype(artifact, int(row["microhaplotype_id"]))
+        )
     return sorted(entity_ids)
 
 
@@ -318,26 +314,11 @@ def get_variants_for_marker(db: DatabaseManager, marker_id: str) -> List[Dict[st
 def ensure_botloci_table(db: DatabaseManager) -> None:
     """Create the bottom-loci lookup table if it is missing."""
     db.execute_update("""
-        IF OBJECT_ID(N'[dbo].[botloci]', N'U') IS NULL
-        BEGIN
-            CREATE TABLE botloci (
-                id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
-                marker_id NVARCHAR(255) NOT NULL UNIQUE,
-                created_at DATETIME DEFAULT GETDATE()
-            )
-        END
-    """)
-    db.execute_update("""
-        IF OBJECT_ID(N'[dbo].[botloci]', N'U') IS NOT NULL
-           AND NOT EXISTS (
-               SELECT 1
-               FROM sys.indexes
-               WHERE name = 'idx_botloci_marker_id'
-                 AND object_id = OBJECT_ID(N'[dbo].[botloci]')
-           )
-        BEGIN
-            CREATE INDEX idx_botloci_marker_id ON botloci(marker_id)
-        END
+        CREATE TABLE IF NOT EXISTS botloci (
+            id INTEGER PRIMARY KEY,
+            marker_id TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
     """)
 
 
@@ -366,7 +347,7 @@ def is_bottom_locus(db: DatabaseManager, marker_id: str) -> bool:
         return False
     try:
         result = db.execute_query(
-            "SELECT TOP 1 marker_id FROM botloci WHERE marker_id = ?",
+            "SELECT marker_id FROM botloci WHERE marker_id = ? LIMIT 1",
             (marker_id,),
         )
         return bool(result)
@@ -499,22 +480,30 @@ def get_database_statistics(db: DatabaseManager) -> Dict[str, int]:
 
 def get_species_statistics(db: DatabaseManager, species_id: int) -> Dict[str, Any]:
     """Get statistics for a specific species"""
+    # Independent counts: joining every table at once multiplies rows
+    # (markers x samples), which SQLite evaluates literally.
     query = """
         SELECT
-            COUNT(DISTINCT c.id) as chromosome_count,
-            COUNT(DISTINCT mk.id) as marker_count,
-            COUNT(DISTINCT m.id) as microhaplotype_count,
-            COUNT(DISTINCT v.id) as variant_count,
-            COUNT(DISTINCT s.id) as sample_count
+            (SELECT COUNT(*) FROM chromosomes c WHERE c.species_id = ?) as chromosome_count,
+            (SELECT COUNT(*)
+             FROM markers mk
+             JOIN chromosomes c ON c.id = mk.chromosome_id
+             WHERE c.species_id = ?) as marker_count,
+            (SELECT COUNT(*)
+             FROM microhaplotypes m
+             JOIN markers mk ON mk.id = m.marker_id
+             JOIN chromosomes c ON c.id = mk.chromosome_id
+             WHERE c.species_id = ?) as microhaplotype_count,
+            (SELECT COUNT(*)
+             FROM variants v
+             JOIN markers mk ON mk.id = v.marker_id
+             JOIN chromosomes c ON c.id = mk.chromosome_id
+             WHERE c.species_id = ?) as variant_count,
+            (SELECT COUNT(*) FROM samples s WHERE s.species_id = ?) as sample_count
         FROM species sp
-        LEFT JOIN chromosomes c ON sp.id = c.species_id
-        LEFT JOIN markers mk ON c.id = mk.chromosome_id
-        LEFT JOIN microhaplotypes m ON mk.id = m.marker_id
-        LEFT JOIN variants v ON mk.id = v.marker_id
-        LEFT JOIN samples s ON sp.id = s.species_id
         WHERE sp.id = ?
     """
-    results = db.execute_query(query, (species_id,))
+    results = db.execute_query(query, (species_id,) * 6)
     return results[0] if results else {}
 
 
@@ -688,15 +677,16 @@ def get_microhaplotypes_paginated(
             mk.marker_id,
             sp.id as species_id,
             sp.name as species_name,
-            (
-                SELECT COUNT(*)
-                FROM samples s_count
-                WHERE s_count.species_id = sp.id
-            ) as species_sample_count
+            COALESCE(sc.sample_count, 0) as species_sample_count
         FROM microhaplotypes m
         JOIN markers mk ON m.marker_id = mk.id
         JOIN chromosomes c ON mk.chromosome_id = c.id
         JOIN species sp ON c.species_id = sp.id
+        LEFT JOIN (
+            SELECT species_id, COUNT(*) AS sample_count
+            FROM samples
+            GROUP BY species_id
+        ) sc ON sc.species_id = sp.id
         WHERE 1=1
     """
     params = []
@@ -964,22 +954,22 @@ def get_alleles_for_sample(db: DatabaseManager, sample_code: str) -> List[Dict[s
     species_id = int(sample_rows[0]["species_id"])
     artifact_rows = db.execute_query(
         """
-        SELECT artifact_path
-        FROM presence_artifacts
-        WHERE entity_type = 'sample_lookup'
-          AND species_id = ?
-        ORDER BY created_at DESC
+        SELECT DISTINCT pb.artifact_id
+        FROM presence_bitmaps pb
+        JOIN presence_artifacts pa ON pa.id = pb.artifact_id
+        WHERE pb.entity_id = ?
+          AND pa.entity_type = 'sample'
+          AND pa.species_id = ?
         """,
-        (species_id,),
+        (sample_id, species_id),
     )
     microhaplotype_ids = set()
-    for artifact in artifact_rows:
+    for row in artifact_rows:
         try:
-            microhaplotype_ids.update(
-                read_microhaplotype_ids_for_entity(artifact["artifact_path"], sample_id)
-            )
+            artifact = load_presence_artifact(db, int(row["artifact_id"]))
         except Exception:
             continue
+        microhaplotype_ids.update(microhaplotype_ids_for_entity(artifact, sample_id))
     if not microhaplotype_ids:
         return []
 
@@ -1246,7 +1236,7 @@ def get_microhaplotype_accumulation_data(
         """
         WITH ranked_artifacts AS (
             SELECT
-                artifact_path,
+                id,
                 entity_type,
                 ROW_NUMBER() OVER (
                     PARTITION BY entity_type, source_path, project_id
@@ -1254,25 +1244,25 @@ def get_microhaplotype_accumulation_data(
                 ) AS artifact_rank
             FROM presence_artifacts
             WHERE species_id = ?
-              AND entity_type IN ('sample_lookup', 'project_lookup')
+              AND entity_type IN ('sample', 'project')
         )
-        SELECT artifact_path, entity_type
+        SELECT id, entity_type
         FROM ranked_artifacts
         WHERE artifact_rank = 1
         """,
         (species_id,),
     )
-    sample_artifact_paths = [
-        row["artifact_path"]
+    sample_artifact_ids = [
+        int(row["id"])
         for row in artifact_rows
-        if row.get("artifact_path") and row.get("entity_type") == "sample_lookup"
+        if row.get("id") is not None and row.get("entity_type") == "sample"
     ]
-    project_artifact_paths = [
-        row["artifact_path"]
+    project_artifact_ids = [
+        int(row["id"])
         for row in artifact_rows
-        if row.get("artifact_path") and row.get("entity_type") == "project_lookup"
+        if row.get("id") is not None and row.get("entity_type") == "project"
     ]
-    if not sample_artifact_paths and not project_artifact_paths:
+    if not sample_artifact_ids and not project_artifact_ids:
         return []
 
     def entity_sort_key(row: Dict[str, Any]) -> tuple:
@@ -1285,15 +1275,15 @@ def get_microhaplotype_accumulation_data(
         )
 
     loaded_sample_artifacts = []
-    for artifact_path in sample_artifact_paths:
+    for artifact_id in sample_artifact_ids:
         try:
-            loaded_sample_artifacts.append(load_lookup_artifact(artifact_path))
+            loaded_sample_artifacts.append(load_presence_artifact(db, artifact_id))
         except Exception:
             continue
     loaded_project_artifacts = []
-    for artifact_path in project_artifact_paths:
+    for artifact_id in project_artifact_ids:
         try:
-            loaded_project_artifacts.append(load_lookup_artifact(artifact_path))
+            loaded_project_artifacts.append(load_presence_artifact(db, artifact_id))
         except Exception:
             continue
 
@@ -1455,7 +1445,6 @@ def get_microhaplotype_accumulation_data(
         key=entity_sort_key,
     )
 
-    seen_microhaplotypes = set()
     results: List[Dict[str, Any]] = []
     output_indices = None
     if (
@@ -1512,6 +1501,17 @@ def get_microhaplotype_accumulation_data(
 
         return results
 
+    # Artifacts use different microhaplotype axes, so map each one onto a
+    # shared axis and track first sightings in a boolean array.
+    shared_axis = np.unique(
+        np.concatenate([artifact["microhaplotype_ids"] for artifact in loaded_artifacts])
+    )
+    shared_columns = {
+        id(artifact): np.searchsorted(shared_axis, artifact["microhaplotype_ids"])
+        for artifact in loaded_artifacts
+    }
+    seen = np.zeros(len(shared_axis), dtype=np.bool_)
+    cumulative_unique_count = 0
     for ordered_index, row in enumerate(ordered_entities):
         entity_id = int(row["entity_id"])
         artifacts = (
@@ -1520,12 +1520,19 @@ def get_microhaplotype_accumulation_data(
             else loaded_project_artifacts
         )
         for artifact in artifacts:
-            seen_microhaplotypes.update(
-                read_microhaplotype_ids_from_loaded_lookup(artifact, entity_id)
-            )
+            row_idx = artifact["entity_index"].get(entity_id)
+            if row_idx is None:
+                continue
+            bits = np.unpackbits(
+                artifact["packed_presence"][row_idx],
+                bitorder="little",
+            )[:int(artifact["microhaplotype_count"])]
+            columns = shared_columns[id(artifact)][bits.view(np.bool_)]
+            new_columns = np.unique(columns[~seen[columns]])
+            seen[new_columns] = True
+            cumulative_unique_count += len(new_columns)
         if output_indices is not None and ordered_index not in output_indices:
             continue
-        cumulative_unique_count = len(seen_microhaplotypes)
         institution_label, location_label, group_label = institution_location_labels(row)
         results.append(
             {
@@ -1563,20 +1570,20 @@ def get_microhaplotype_project_sharing_data(
 
     artifact_rows = db.execute_query(
         """
-        SELECT artifact_path
+        SELECT id
         FROM presence_artifacts
         WHERE species_id = ?
-          AND entity_type = 'project_lookup'
-        ORDER BY created_at DESC
+          AND entity_type = 'project'
+        ORDER BY created_at DESC, id DESC
         """,
         (species_id,),
     )
-    artifact_paths = [
-        row["artifact_path"]
+    artifact_ids = [
+        int(row["id"])
         for row in artifact_rows
-        if row.get("artifact_path")
+        if row.get("id") is not None
     ]
-    if not artifact_paths:
+    if not artifact_ids:
         return {
             "owner_groups": [],
             "available_owner_groups": [],
@@ -1585,9 +1592,9 @@ def get_microhaplotype_project_sharing_data(
         }
 
     loaded_artifacts = []
-    for artifact_path in artifact_paths:
+    for artifact_id in artifact_ids:
         try:
-            loaded_artifacts.append(load_lookup_artifact(artifact_path))
+            loaded_artifacts.append(load_presence_artifact(db, artifact_id))
         except Exception:
             continue
     if not loaded_artifacts:
@@ -1604,18 +1611,18 @@ def get_microhaplotype_project_sharing_data(
         entity_ids = artifact["entity_ids"]
         microhaplotype_ids = artifact["microhaplotype_ids"]
         microhaplotype_count = int(artifact["microhaplotype_count"])
-        packed_presence = artifact["packed_presence"]
-
-        for row_idx, raw_project_id in enumerate(entity_ids.tolist()):
-            project_id = int(raw_project_id)
-            project_ids_seen.add(project_id)
-            bits = np.unpackbits(
-                packed_presence[row_idx],
-                bitorder="little",
-            )[:microhaplotype_count]
-            present_positions = np.flatnonzero(bits)
-            for pos in present_positions.tolist():
-                microhaplotype_projects[int(microhaplotype_ids[pos])].add(project_id)
+        project_ids_seen.update(int(project_id) for project_id in entity_ids.tolist())
+        bits = np.unpackbits(
+            artifact["packed_presence"],
+            axis=1,
+            bitorder="little",
+        )[:, :microhaplotype_count]
+        row_positions, col_positions = np.nonzero(bits)
+        for project_id, microhaplotype_id in zip(
+            entity_ids[row_positions].tolist(),
+            microhaplotype_ids[col_positions].tolist(),
+        ):
+            microhaplotype_projects[microhaplotype_id].add(project_id)
 
     if not project_ids_seen or not microhaplotype_projects:
         return {

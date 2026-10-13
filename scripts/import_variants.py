@@ -69,7 +69,11 @@ class VariantImporter:
 
                     # Insert variant
                     cursor.execute("""
-                        IF NOT EXISTS (
+                        INSERT INTO variants
+                        (marker_id, position, variant_type, reference_allele,
+                         alternate_allele, frequency)
+                        SELECT ?, ?, ?, ?, ?, ?
+                        WHERE NOT EXISTS (
                             SELECT 1 FROM variants
                             WHERE marker_id = ?
                               AND position = ?
@@ -77,24 +81,19 @@ class VariantImporter:
                               AND reference_allele = ?
                               AND alternate_allele = ?
                         )
-                        BEGIN
-                            INSERT INTO variants
-                            (marker_id, position, variant_type, reference_allele,
-                             alternate_allele, frequency)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        END
                     """, (
                         marker_db_id,
                         int(row['position']),
                         row['variant_type'],
                         row['reference_allele'],
                         row['alternate_allele'],
+                        float(row.get('frequency', 0.0)),
                         marker_db_id,
                         int(row['position']),
                         row['variant_type'],
                         row['reference_allele'],
-                        row['alternate_allele'],
-                        float(row.get('frequency', 0.0))
+                        row['alternate_allele']
+                    ))
                     ))
 
                     if cursor.rowcount > 0:

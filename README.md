@@ -32,12 +32,12 @@ HapSearch is designed for breeders, quantitative geneticists, researchers, data 
 
 ## Project overview
 
-HapSearch is built with Python, Flask, Dash, Plotly, BioPython, and Microsoft SQL Server. The repository includes the web application, database layer, data-import tools, alignment utilities, and automated tests.
+HapSearch is built with Python, Flask, Dash, Plotly, BioPython, and SQLite. The repository includes the web application, database layer, data-import tools, alignment utilities, and automated tests.
 
 ```text
 alignment/   Sequence alignment and variant annotation
 auth/        ORCID authentication and sessions
-database/    Data access and presence/absence artifacts
+database/    Data access and presence/absence bitmaps
 pages/       Dash views and exploration workflows
 scripts/     Database initialization and data imports
 tests/       Automated tests
@@ -45,10 +45,10 @@ tests/       Automated tests
 
 ## Setup and development
 
-The containerized environment uses Docker Compose with Microsoft SQL Server. Direct local development requires Python 3.13+ and ODBC Driver 18 for SQL Server. See the [SQL Server setup notes](MSSQL_SETUP.md) and [.env example](.env.example) for configuration details.
+All data lives in one SQLite file (`data/hapsearch.db` by default), built with the scripts in `scripts/`. Local development requires Python 3.13+; the Docker Compose files mount the database read-write. In production the file ships read-only inside the container image on Google Cloud Run. See the [Cloud Run deployment guide](docs/cloud-run.md) and [.env example](.env.example) for configuration details.
 
 ## Documentation
 
 - [Product plan and roadmap](HaploSearch_Plan_Document.md)
-- [Microsoft SQL Server setup notes](MSSQL_SETUP.md)
+- [Cloud Run deployment and database builds](docs/cloud-run.md)
 - [Visualization color system](design/color_palettes.md)

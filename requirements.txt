@@ -20,13 +20,6 @@ requests>=2.31.0
 # Utilities
 python-dotenv>=1.0.0
 
-# Database drivers (for Microsoft SQL Server)
-# Option 1: pyodbc (widely used, well-supported)
-pyodbc>=4.0.39
-
-# Option 2: mssql-python (newer Microsoft driver, recommended for new projects)
-# mssql-python>=1.0.0  # Uncomment to use instead of pyodbc
-
 # Web server (for production deployment)
 gunicorn>=21.2.0
 

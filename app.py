@@ -31,11 +31,29 @@ from auth.session import is_authenticated, is_admin, get_current_user, start_loc
 
 @server.route('/')
 def landing_page():
-    """Serve the public landing page."""
+    """Serve the public landing page.
+
+    On Cloud Run the public landing page lives on GitHub Pages, so signed-out
+    visitors are sent there when HAPSEARCH_LANDING_URL is set.
+    """
+    if config.LANDING_URL and not is_authenticated():
+        return redirect(config.LANDING_URL)
     user = get_current_user() if is_authenticated() else None
     return render_template('landing.html',
                            app_env=config.APP_ENV,
                            user=user)
+
+
+@server.route('/health')
+def health():
+    """Unauthenticated wake-up/health check that never touches the database."""
+    return 'ok', 200, {'Content-Type': 'text/plain', 'Cache-Control': 'no-store'}
+
+
+@server.route('/robots.txt')
+def robots_txt():
+    """Keep crawlers from waking the scale-to-zero service."""
+    return 'User-agent: *\nDisallow: /\n', 200, {'Content-Type': 'text/plain'}
 
 
 @server.route('/static/<path:filename>')

@@ -28,15 +28,15 @@ def _ensure_users_table(db: DatabaseManager):
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE users (
-                    id INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
-                    orcid_id NVARCHAR(255) NOT NULL UNIQUE,
-                    display_name NVARCHAR(255),
-                    email NVARCHAR(255),
-                    role NVARCHAR(10) NOT NULL DEFAULT 'user'
+                    id INTEGER PRIMARY KEY,
+                    orcid_id TEXT NOT NULL UNIQUE,
+                    display_name TEXT,
+                    email TEXT,
+                    role TEXT NOT NULL DEFAULT 'user'
                         CHECK (role IN ('admin', 'user')),
-                    is_active INT DEFAULT 1,
-                    created_at DATETIME DEFAULT GETDATE(),
-                    last_login DATETIME
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    last_login TEXT
                 )
             """)
         print("Created users table.")

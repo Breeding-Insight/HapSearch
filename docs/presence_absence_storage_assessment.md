@@ -1,5 +1,11 @@
 # Presence/Absence Storage and Import Assessment
 
+> **Update (SQLite port):** the matrices are no longer `.npz` files. Each import now
+> stores one packed bit row per sample or project in the `presence_bitmaps` table of
+> the SQLite database (sample/project orientation only; the other direction is read
+> from the same bits), and workers cache decoded matrices in memory. The SQL Server
+> discussion below is kept for history. See [cloud-run.md](cloud-run.md).
+
 ## Executive Summary
 
 The presence/absence import path now stores the large boolean matrix as compressed filesystem artifacts, not as one SQL Server row per present cell. SQL Server remains the system of record for metadata, artifact manifests, and compact summary rows used by the UI.

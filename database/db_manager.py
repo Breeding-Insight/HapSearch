@@ -1,52 +1,44 @@
 """Database manager for HaploSearch."""
 
-import time
 import logging
+import os
+import sqlite3
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 import config
 
 logger = logging.getLogger(__name__)
 
-try:
-    import pyodbc
-    PYODBC_AVAILABLE = True
-except ImportError:
-    PYODBC_AVAILABLE = False
+SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'schema_sqlite.sql',
+)
 
 
 class DatabaseManager:
-    """Manages Microsoft SQL Server connections and operations."""
+    """Manages SQLite connections and operations."""
 
-    _CONNECT_RETRIES = 3
-    _CONNECT_BACKOFF_BASE = 1.0  # seconds; doubles each retry
-
-    def __init__(self, connection_string: str = None):
-        self.connection_string = connection_string or config.DATABASE_CONNECTION_STRING
+    def __init__(self, db_path: str = None, read_only: bool = None):
+        self.db_path = db_path or config.SQLITE_DB_PATH
+        self.read_only = config.SQLITE_READ_ONLY if read_only is None else read_only
         self._shared_conn = None
 
-        if not PYODBC_AVAILABLE:
-            raise ImportError(
-                "pyodbc is required for Microsoft SQL Server connections. "
-                "Install it with: pip install pyodbc"
-            )
-
     def _open_connection(self):
-        """Open a new database connection with retry logic for transient failures."""
-        last_err = None
-        for attempt in range(1, self._CONNECT_RETRIES + 1):
-            try:
-                return pyodbc.connect(self.connection_string)
-            except Exception as exc:
-                last_err = exc
-                if attempt < self._CONNECT_RETRIES:
-                    wait = self._CONNECT_BACKOFF_BASE * (2 ** (attempt - 1))
-                    logger.warning(
-                        "SQL Server connect attempt %d/%d failed (%s); retrying in %.1fs",
-                        attempt, self._CONNECT_RETRIES, exc, wait,
-                    )
-                    time.sleep(wait)
-        raise last_err  # type: ignore[misc]
+        """Open a new SQLite connection.
+
+        Read-only mode opens the file as immutable: SQLite skips locking and
+        change detection, which is safe because the file baked into the image
+        never changes while the instance runs.
+        """
+        if self.read_only:
+            if not os.path.exists(self.db_path):
+                raise FileNotFoundError(f"SQLite database not found: {self.db_path}")
+            uri = f"file:{os.path.abspath(self.db_path)}?mode=ro&immutable=1"
+            conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        else:
+            conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+            conn.execute("PRAGMA foreign_keys = ON")
+        return conn
 
     @contextmanager
     def shared_connection(self):
@@ -100,14 +92,12 @@ class DatabaseManager:
 
     def execute_query(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """Execute a SELECT query and return results as list of dicts"""
-        query = self._normalize_query_for_mssql(query)
-        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
-            
+
             columns = [column[0] for column in cursor.description]
-            
+
             results = []
             for row in cursor.fetchall():
                 results.append(dict(zip(columns, row)))
@@ -127,83 +117,41 @@ class DatabaseManager:
             cursor.executemany(query, params_list)
             return cursor.rowcount
 
-    def get_last_insert_id(self) -> int:
-        """Get the last inserted row ID"""
+    def ensure_schema(self, schema_file: Optional[str] = None) -> None:
+        """Create any missing tables and indexes from the SQLite schema file."""
+        with open(schema_file or SCHEMA_PATH, 'r', encoding='utf-8') as handle:
+            schema_sql = handle.read()
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT SCOPE_IDENTITY()")
-            result = cursor.fetchone()
-            return result[0] if result else None
+            conn.executescript(schema_sql)
+
+    def optimize(self, vacuum: bool = False) -> None:
+        """Refresh query-planner statistics, optionally compacting the file.
+
+        SQLite picks join orders from ANALYZE statistics; without them the
+        artifact-backed ID filters fall back to scanning every marker.
+        """
+        with self.get_connection() as conn:
+            conn.execute("ANALYZE")
+        if vacuum:
+            conn = self._open_connection()
+            try:
+                conn.execute("VACUUM")
+            finally:
+                conn.close()
 
     def table_exists(self, table_name: str) -> bool:
         """Check if a table exists in the database"""
-        query = f"""
-            SELECT COUNT(*) as count
-            FROM sys.objects
-            WHERE object_id = OBJECT_ID(N'[dbo].[{table_name}]') AND type in (N'U')
-        """
-        results = self.execute_query(query)
+        results = self.execute_query(
+            "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        )
         return results[0]['count'] > 0 if results else False
 
     def get_table_row_count(self, table_name: str) -> int:
         """Get the number of rows in a table"""
-        query = f"SELECT COUNT(*) as count FROM [{table_name}]"
+        query = f'SELECT COUNT(*) as count FROM "{table_name}"'
         result = self.execute_query(query)
         return result[0]['count'] if result else 0
-
-    def _normalize_query_for_mssql(self, query: str) -> str:
-        """Normalize legacy query helpers to Microsoft SQL Server syntax."""
-        import re
-        
-        # 1. Replace LIMIT in EXISTS subqueries with TOP
-        pattern = r'(EXISTS\s*\([^)]*?)LIMIT\s+1'
-        query = re.sub(pattern, r'\1TOP 1', query, flags=re.IGNORECASE | re.DOTALL)
-        
-        # 2. Replace LIMIT...OFFSET at end of query with OFFSET...FETCH NEXT
-        # Pattern: LIMIT n OFFSET m or LIMIT n (at end of query)
-        # SQL Server syntax: OFFSET m ROWS FETCH NEXT n ROWS ONLY
-        limit_offset_pattern = r'LIMIT\s+(\d+)\s+OFFSET\s+(\d+)(?=\s*$|\s*;|\s*$)'
-        def replace_limit_offset(match):
-            limit = match.group(1)
-            offset = match.group(2)
-            return f'OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY'
-        query = re.sub(limit_offset_pattern, replace_limit_offset, query, flags=re.IGNORECASE | re.MULTILINE)
-        
-        # 3. Replace standalone LIMIT at end (without OFFSET)
-        # This is trickier - we'll handle it if OFFSET is 0
-        limit_only_pattern = r'LIMIT\s+(\d+)(?=\s*$|\s*;|\s*$)'
-        def replace_limit_only(match):
-            limit = match.group(1)
-            return f'OFFSET 0 ROWS FETCH NEXT {limit} ROWS ONLY'
-        # Only replace if not already converted by previous pattern
-        if 'FETCH NEXT' not in query:
-            query = re.sub(limit_only_pattern, replace_limit_only, query, flags=re.IGNORECASE | re.MULTILINE)
-        
-        # 4. Replace INSTR with CHARINDEX
-        # INSTR(string, substring) -> CHARINDEX(substring, string)
-        #
-        # First handle the nested pattern used by sequence search:
-        #   INSTR(UPPER(expr), UPPER(?))  ->  CHARINDEX(UPPER(?), UPPER(expr))
-        instr_upper_pattern = (
-            r'INSTR\s*\(\s*UPPER\s*\(\s*([^)]+?)\s*\)\s*,\s*'
-            r'UPPER\s*\(\s*(\?)\s*\)\s*\)'
-        )
-        query = re.sub(
-            instr_upper_pattern,
-            r'CHARINDEX(UPPER(\2), UPPER(\1))',
-            query,
-            flags=re.IGNORECASE
-        )
-
-        # Fallback for simpler INSTR(a, b) calls without nested function args.
-        instr_simple_pattern = r'INSTR\s*\(\s*([^,()]+)\s*,\s*([^,()]+)\s*\)'
-        def replace_instr_simple(match):
-            string_expr = match.group(1).strip()
-            substring_expr = match.group(2).strip()
-            return f'CHARINDEX({substring_expr}, {string_expr})'
-        query = re.sub(instr_simple_pattern, replace_instr_simple, query, flags=re.IGNORECASE)
-        
-        return query
 
 
 # Helper functions for common database operations
@@ -226,8 +174,7 @@ def get_or_create_species(db: DatabaseManager, name: str, common_name: str = Non
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, (name, common_name, description))
-        cursor.execute("SELECT SCOPE_IDENTITY()")
-        return cursor.fetchone()[0]
+        return cursor.lastrowid
 
 
 def get_or_create_chromosome(db: DatabaseManager, species_id: int,
@@ -248,8 +195,7 @@ def get_or_create_chromosome(db: DatabaseManager, species_id: int,
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(query, (species_id, chromosome_name, length))
-        cursor.execute("SELECT SCOPE_IDENTITY()")
-        return cursor.fetchone()[0]
+        return cursor.lastrowid
 
 
 def get_or_create_marker(db: DatabaseManager, marker_id: str, chromosome_id: int,
@@ -273,8 +219,7 @@ def get_or_create_marker(db: DatabaseManager, marker_id: str, chromosome_id: int
         cursor = conn.cursor()
         cursor.execute(query, (marker_id, chromosome_id, position_start,
                               position_end, marker_type, description))
-        cursor.execute("SELECT SCOPE_IDENTITY()")
-        return cursor.fetchone()[0]
+        return cursor.lastrowid
 
 
 def update_chromosome_counts(db: DatabaseManager):
@@ -312,10 +257,16 @@ def update_haplotype_frequencies(db: DatabaseManager):
             SELECT
                 m.id AS microhaplotype_id,
                 c.species_id,
-                CASE
-                    WHEN ps.present_count IS NOT NULL THEN ps.present_count
-                    ELSE ISNULL(mc.ms_present_samples, 0)
-                END AS present_samples
+                COALESCE(
+                    ps.present_count,
+                    (
+                        SELECT COUNT(DISTINCT s.id)
+                        FROM microhaplotype_samples ms
+                        JOIN samples s ON s.id = ms.sample_id
+                        WHERE ms.microhaplotype_id = m.id
+                          AND s.species_id = c.species_id
+                    )
+                ) AS present_samples
             FROM microhaplotypes m
             JOIN markers mk ON mk.id = m.marker_id
             JOIN chromosomes c ON c.id = mk.chromosome_id
@@ -323,25 +274,18 @@ def update_haplotype_frequencies(db: DatabaseManager):
               ON ps.microhaplotype_id = m.id
              AND ps.species_id = c.species_id
              AND ps.entity_type = 'sample'
-            OUTER APPLY (
-                SELECT COUNT(DISTINCT s.id) AS ms_present_samples
-                FROM microhaplotype_samples ms
-                JOIN samples s ON s.id = ms.sample_id
-                WHERE ms.microhaplotype_id = m.id
-                  AND s.species_id = c.species_id
-            ) mc
         )
-        UPDATE m
+        UPDATE microhaplotypes
         SET
-            m.sample_count = pm.present_samples,
-            m.frequency = CASE
-                WHEN ISNULL(st.total_samples, 0) > 0
-                    THEN CAST(pm.present_samples AS FLOAT) / CAST(st.total_samples AS FLOAT)
+            sample_count = pm.present_samples,
+            frequency = CASE
+                WHEN COALESCE(st.total_samples, 0) > 0
+                    THEN CAST(pm.present_samples AS REAL) / st.total_samples
                 ELSE 0.0
             END
-        FROM microhaplotypes m
-        JOIN per_microhap pm ON pm.microhaplotype_id = m.id
+        FROM per_microhap pm
         LEFT JOIN species_totals st ON st.species_id = pm.species_id
+        WHERE pm.microhaplotype_id = microhaplotypes.id
     """
 
     db.execute_update(query)

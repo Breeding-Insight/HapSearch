@@ -1,0 +1,43 @@
+# Builds and deploys HapSearch. The SQLite database is not in git, so the
+# first step copies the current build from Cloud Storage; publishing a new
+# database is an upload to that bucket followed by a new build.
+substitutions:
+  _REGION: us-west1
+  _REPOSITORY: hapsearch
+  _SERVICE: hapsearch
+  _DATABASE_URI: gs://YOUR_BUCKET/hapsearch/hapsearch.db
+
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - storage
+      - cp
+      - ${_DATABASE_URI}
+      - data/hapsearch.db
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --quiet
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
