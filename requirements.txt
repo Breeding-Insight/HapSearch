@@ -16,6 +16,8 @@ biopython>=1.81
 # Authentication
 authlib>=1.3.0
 requests>=2.31.0
+# ORCID allowlist on Cloud Run (HAPSEARCH_USER_STORE=firestore)
+google-cloud-firestore>=2.16.0
 
 # Utilities
 python-dotenv>=1.0.0

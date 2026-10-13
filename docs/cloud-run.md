@@ -1,9 +1,11 @@
 # Cloud Run deployment
 
-HapSearch runs on Cloud Run as a scale-to-zero service. All data lives in one SQLite
-file that ships inside the container image, so the service needs no database server,
-no Cloud SQL connection and no VPC connector. Nothing is billed while the service is
-idle except the stored image.
+HapSearch runs on Cloud Run as a scale-to-zero service. All research data lives in
+one SQLite file that ships inside the container image, so the service needs no
+database server, no Cloud SQL connection and no VPC connector. The ORCID allowlist
+lives in Firestore, like HapApp and AlloMate, because it changes at runtime (Admin tab,
+last sign-in) and the image's SQLite file is read-only. Nothing is billed while the
+service is idle except the stored image and Firestore storage.
 
 ## How the data gets into the image
 
@@ -31,7 +33,6 @@ python scripts/import_fasta.py data/fasta/alfalfa_allele_db_v052.fa "Medicago sa
 python scripts/import_botloci.py data/markers/20201030-BI-Alfalfa_SNPs_DArTag-probe-design_f180bp.botloci
 python scripts/import_sample_presence.py data/presence_absence/sample --species-id 1
 python scripts/import_project_presence.py data/presence_absence/project/20260413-alfalfa-v52-madc-filter-miss-files_hapPA_matrix.csv
-python scripts/manage_users.py add --orcid 0000-0000-0000-0000 --name "Example User" --role admin
 python scripts/init_database.py --optimize
 ```
 
@@ -47,6 +48,57 @@ driver, which are no longer app dependencies:
 pip install pyodbc
 python scripts/migrate_mssql_to_sqlite.py --mssql-connection-string "DRIVER={ODBC Driver 18 for SQL Server};SERVER=...;DATABASE=HaploSearch;UID=...;PWD=...;TrustServerCertificate=yes" --artifact-dir /srv/hapsearch/production/presence_artifacts --output data/hapsearch.db
 ```
+
+## Firestore (user allowlist)
+
+Create a Firestore Standard database in Native mode, in the same project:
+
+```text
+database ID: hapsearch-db
+location: us-west1
+security rules: deny all reads and writes from browsers and mobile clients
+```
+
+HapSearch reads and writes it only from the Python server through Google IAM. Each
+allowed person is a `users/{orcid_id}` document:
+
+```json
+{
+  "orcid_id": "0000-0000-0000-0000",
+  "display_name": "Example User",
+  "email": "user@example.org",
+  "role": "admin",
+  "is_active": true
+}
+```
+
+The app also keeps `created_at` and `last_login`. Admins manage everyone else from the
+Admin tab. To seed the first admin, or to copy the allowlist from the old database,
+run the CLI with your own Application Default Credentials
+(`gcloud auth application-default login`):
+
+```bash
+export GOOGLE_CLOUD_PROJECT=PROJECT_ID FIRESTORE_DATABASE=hapsearch-db
+python scripts/manage_users.py --store firestore add --orcid 0000-0000-0000-0000 --name "Example User" --role admin
+python scripts/manage_users.py --store firestore copy-from-sqlite
+```
+
+`copy-from-sqlite` reads the `users` table from `SQLITE_DB_PATH` (for example the
+output of the SQL Server migration) and skips anyone already in Firestore.
+
+The store is chosen by `HAPSEARCH_USER_STORE`. It defaults to `firestore` on Cloud Run
+(detected from `K_SERVICE`) and to `sqlite` everywhere else, so local development and
+the VM keep using the `users` table. With Firestore, startup performs one read and
+stops with a clear message if the database name or IAM role is wrong.
+
+## Service identity
+
+Create a service account such as `hapsearch-cloud-run` and grant it:
+
+- `roles/datastore.user` on the project (the Admin tab and sign-in write to Firestore)
+- `roles/secretmanager.secretAccessor` on each HapSearch secret
+
+Attach it as the Cloud Run service identity. Do not create a JSON key.
 
 ## Service settings
 
@@ -66,6 +118,7 @@ gcloud run deploy hapsearch \
   --source . \
   --region=us-west1 \
   --allow-unauthenticated \
+  --service-account=hapsearch-cloud-run@PROJECT_ID.iam.gserviceaccount.com \
   --port=8080 \
   --cpu=1 \
   --memory=1Gi \
@@ -74,7 +127,7 @@ gcloud run deploy hapsearch \
   --min-instances=0 \
   --max-instances=3 \
   --execution-environment=gen2 \
-  --set-env-vars="APP_ENV=production,DEBUG_MODE=false,TLS_ENABLED=false,HAPSEARCH_LANDING_URL=https://breeding-insight.github.io/HapSearch/" \
+  --set-env-vars="APP_ENV=production,DEBUG_MODE=false,TLS_ENABLED=false,FIRESTORE_DATABASE=hapsearch-db,GOOGLE_CLOUD_PROJECT=PROJECT_ID,HAPSEARCH_LANDING_URL=https://breeding-insight.github.io/HapSearch/" \
   --set-secrets="SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest"
 ```
 
@@ -93,8 +146,4 @@ Pages with the shared `wake.js` script; see the HapApp and AlloMate `landing/` f
 
 ## Known limits
 
-- **User administration is read-only on Cloud Run.** The ORCID allowlist (`users`
-  table) ships inside the image, so the Admin tab cannot add or change users there and
-  `last_login` is not recorded. Manage users with `scripts/manage_users.py` before
-  building, or move users to Firestore (`users/{orcid_id}`) like HapApp and AlloMate.
 - **Imports do not run on Cloud Run.** Build the database locally or in Cloud Build.

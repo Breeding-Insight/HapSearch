@@ -23,6 +23,17 @@ server.register_blueprint(auth_bp)
 
 # Import session helpers
 from auth.session import is_authenticated, is_admin, get_current_user, start_local_dev_session
+from auth.user_store import get_user_store
+
+if config.USER_STORE_PREFLIGHT:
+    try:
+        get_user_store().assert_ready()
+    except Exception as exc:
+        raise RuntimeError(
+            f"The {config.USER_STORE} user store is not reachable. On Cloud Run, check "
+            "FIRESTORE_DATABASE, GOOGLE_CLOUD_PROJECT and that the service account has "
+            f"roles/datastore.user. ({exc})"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

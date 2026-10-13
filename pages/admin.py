@@ -13,8 +13,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dash_app import app
-from database.db_manager import DatabaseManager
 from auth.session import is_admin
+from auth.user_store import UserExistsError, get_user_store
 
 
 # ---------------------------------------------------------------------------
@@ -120,13 +120,9 @@ layout = dbc.Container([
 # ---------------------------------------------------------------------------
 
 def _get_all_users():
-    """Fetch all users from the database."""
+    """Fetch all users, newest first."""
     try:
-        db = DatabaseManager()
-        return db.execute_query(
-            "SELECT orcid_id, display_name, email, role, is_active, "
-            "created_at, last_login FROM users ORDER BY created_at DESC"
-        )
+        return list(reversed(get_user_store().list_users()))
     except Exception:
         return []
 
@@ -248,30 +244,16 @@ def add_user(n_clicks, orcid_id, name, email, role, refresh):
     if not n_clicks or not orcid_id:
         return no_update, no_update, no_update, no_update, no_update
 
-    orcid_id = orcid_id.strip()
-
     try:
-        db = DatabaseManager()
-        # Check if user already exists
-        existing = db.execute_query(
-            "SELECT orcid_id FROM users WHERE orcid_id = ?", (orcid_id,)
-        )
-        if existing:
-            alert = dbc.Alert(
-                f"User with ORCID {orcid_id} already exists.",
-                color="warning", dismissable=True, duration=5000,
-            )
-            return alert, no_update, no_update, no_update, no_update
-
-        db.execute_update(
-            "INSERT INTO users (orcid_id, display_name, email, role) VALUES (?, ?, ?, ?)",
-            (orcid_id, name or None, email or None, role),
-        )
+        user = get_user_store().add_user(orcid_id, name, email, role)
         alert = dbc.Alert(
-            f"User {orcid_id} added successfully.",
+            f"User {user['orcid_id']} added successfully.",
             color="success", dismissable=True, duration=5000,
         )
         return alert, (refresh or 0) + 1, '', '', ''
+    except (UserExistsError, ValueError) as e:
+        alert = dbc.Alert(str(e), color="warning", dismissable=True, duration=5000)
+        return alert, no_update, no_update, no_update, no_update
     except Exception as e:
         alert = dbc.Alert(
             f"Error adding user: {e}",
@@ -302,12 +284,7 @@ def toggle_active(all_clicks, refresh):
         return no_update, no_update
     orcid_id = ctx.triggered_id['index']
     try:
-        db = DatabaseManager()
-        db.execute_update(
-            "UPDATE users SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END "
-            "WHERE orcid_id = ?",
-            (orcid_id,),
-        )
+        get_user_store().toggle_active(orcid_id)
         alert = dbc.Alert(
             f"Toggled active status for {orcid_id}.",
             color="info", dismissable=True, duration=3000,
@@ -339,12 +316,7 @@ def toggle_role(all_clicks, refresh):
         return no_update, no_update
     orcid_id = ctx.triggered_id['index']
     try:
-        db = DatabaseManager()
-        db.execute_update(
-            "UPDATE users SET role = CASE WHEN role = 'admin' THEN 'user' ELSE 'admin' END "
-            "WHERE orcid_id = ?",
-            (orcid_id,),
-        )
+        get_user_store().toggle_role(orcid_id)
         alert = dbc.Alert(
             f"Toggled role for {orcid_id}.",
             color="info", dismissable=True, duration=3000,
@@ -405,8 +377,7 @@ def confirm_delete(n_clicks, orcid_id, refresh):
     if not n_clicks or not orcid_id:
         return no_update, no_update, no_update
     try:
-        db = DatabaseManager()
-        db.execute_update("DELETE FROM users WHERE orcid_id = ?", (orcid_id,))
+        get_user_store().remove_user(orcid_id)
         alert = dbc.Alert(
             f"User {orcid_id} removed.",
             color="warning", dismissable=True, duration=5000,

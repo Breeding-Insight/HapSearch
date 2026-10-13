@@ -39,6 +39,22 @@ SSL_CONTEXT = (TLS_CERT_PATH, TLS_KEY_PATH) if TLS_ENABLED else None
 # signed-out visitors to / are redirected there instead of the built-in page.
 LANDING_URL = os.getenv('HAPSEARCH_LANDING_URL', '').strip()
 
+# ORCID allowlist backend: 'firestore' on Cloud Run (K_SERVICE is set there),
+# 'sqlite' (the users table) elsewhere. The SQLite file is read-only on Cloud
+# Run, so the Admin tab needs Firestore there.
+USER_STORE = os.getenv(
+    'HAPSEARCH_USER_STORE',
+    'firestore' if os.getenv('K_SERVICE') else 'sqlite',
+).strip().lower()
+GOOGLE_CLOUD_PROJECT = os.getenv('GOOGLE_CLOUD_PROJECT', os.getenv('GCLOUD_PROJECT', '')).strip()
+FIRESTORE_DATABASE = os.getenv('FIRESTORE_DATABASE', '(default)').strip()
+# Check the user store with one read at startup so a wrong database name or
+# missing IAM role fails the deployment instead of the first sign-in.
+USER_STORE_PREFLIGHT = os.getenv(
+    'HAPSEARCH_USER_STORE_PREFLIGHT',
+    'true' if USER_STORE == 'firestore' else 'false',
+).lower() in ('true', '1', 'yes')
+
 # Local dev only: skip ORCID OAuth and create a development admin session.
 BYPASS_ORCID_AUTH = (
     APP_ENV == 'local-dev'
