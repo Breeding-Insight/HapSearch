@@ -24,8 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.db_manager import DatabaseManager, get_or_create_species
 from database.presence_artifacts import (
-    counts_by_microhaplotype,
+    counts_from_matrix,
     ensure_presence_artifact_schema,
+    entity_presence_matrix,
     upsert_presence_summary,
     write_presence_artifact,
 )
@@ -479,35 +480,40 @@ class PresenceImporter:
             valid_sample_mask = sample_id_array > 0
             allele_series = df[allele_id_col].astype(str).str.strip()
 
-            pairs = []
-            for idx, allele_id in enumerate(allele_series):
-                if not allele_id:
-                    continue
-                microhaplotype_id = haplotype_id_map.get(allele_id)
-                if not microhaplotype_id:
-                    skipped_alleles += 1
-                    if verbose and skipped_alleles <= 10:
-                        print(f"Warning: AlleleID '{allele_id}' not found in microhaplotypes, skipping", flush=True)
-                    continue
-                present_indices = np.flatnonzero(presence_matrix[idx] & valid_sample_mask)
-                for pos in present_indices.tolist():
-                    pairs.append((microhaplotype_id, int(sample_id_array[pos])))
-
+            # Each row's microhaplotype id (-1 for blank or unknown AlleleIDs).
+            # The presence matrix is then packed with NumPy rather than one
+            # (allele, sample) pair at a time, which dominated build time.
+            row_mh_ids = np.array(
+                [haplotype_id_map.get(allele_id, -1) if allele_id else -1 for allele_id in allele_series],
+                dtype=np.int64,
+            )
+            unknown = [allele_id for allele_id in allele_series if allele_id and allele_id not in haplotype_id_map]
+            skipped_alleles += len(unknown)
             if verbose:
-                print(f"  Built {len(pairs):,} presence pairs", flush=True)
+                for allele_id in unknown[:10]:
+                    print(f"Warning: AlleleID '{allele_id}' not found in microhaplotypes, skipping", flush=True)
+
+            valid_rows = row_mh_ids > 0
+            imported_count = int(presence_matrix[np.ix_(valid_rows, valid_sample_mask)].sum())
+            entity_matrix = entity_presence_matrix(
+                presence_matrix, row_mh_ids, sample_id_array, mh_ids_in_file, sample_ids,
+            )
+            if verbose:
+                print(f"  Read {imported_count:,} presence entries", flush=True)
 
             if verbose:
                 print("  Writing sample presence bitmaps...", flush=True)
             ensure_presence_artifact_schema(cursor)
             metadata = write_presence_artifact(
                 cursor,
-                pairs,
+                None,
                 mh_ids_in_file,
                 sample_ids,
                 entity_type="sample",
                 species_id=species_id,
                 project_id=project_id,
                 source_path=csv_path,
+                matrix=entity_matrix,
             )
             artifact_id = metadata["id"]
             if artifact_id:
@@ -517,13 +523,9 @@ class PresenceImporter:
                     species_id=species_id,
                     entity_type="sample",
                     total_count=len(sample_ids),
-                    counts_by_microhaplotype=counts_by_microhaplotype(
-                        pairs,
-                        mh_ids_in_file,
-                    ),
+                    counts_by_microhaplotype=counts_from_matrix(entity_matrix, mh_ids_in_file),
                 )
             conn.commit()
-            imported_count = len(pairs)
             if verbose:
                 size_mb = (metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
                 print(
