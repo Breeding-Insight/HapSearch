@@ -335,6 +335,18 @@ body {
   border-top: 1px solid var(--app-border);
   padding-top: 0.75rem;
 }
+
+/* Alignment tab: allele names (row labels) open the allele in Microhaplotypes
+   (assets/msa_allele_links.js). */
+#msa-graph .ytick text {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+#msa-graph .ytick text:hover {
+  text-decoration: underline;
+}
+
 /* Filter by Programs: the "shared by all" filter button above the chart. */
 .sharing-all-btn {
   border: 1px solid #b9c7ca;

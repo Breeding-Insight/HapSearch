@@ -383,7 +383,6 @@ def create_marker_detail_view(marker_id):
             haplotypes = get_microhaplotypes_for_marker(db, marker_id)
             variants = get_variants_for_marker(db, marker_id)
 
-        haplotypes_sorted = sorted(haplotypes, key=lambda h: get_allele_sort_key(h['haplotype_name']), reverse=False)
 
         if not variants and haplotypes:
             variants = auto_detect_variants(haplotypes, marker)
@@ -446,22 +445,14 @@ def create_marker_detail_view(marker_id):
                 ], className="msa-results-loading-region"),
                 id='marker-msa-results-loading',
                 type='circle',
-                color='#319B42',
+                color='#066a73',
             ),
 
-            html.Div([
-                html.Small("Click microhaplotype ID to view details:", className="text-muted me-2"),
-                html.Div([
-                    dbc.Button(
-                        h['haplotype_name'].split('|')[-1],  # Show just the allele ID
-                        id={'type': 'haplotype-link-btn', 'index': h['haplotype_name']},
-                        color="primary",
-                        outline=True,
-                        size="sm",
-                        className="me-1 mb-1"
-                    ) for h in haplotypes_sorted
-                ], className="d-flex flex-wrap")
-            ], className="mb-3 p-2 bg-light border rounded"),
+            html.Div(
+                [html.I(className="fas fa-hand-pointer me-2"),
+                 "Click an allele name in the alignment to open it in Microhaplotypes."],
+                className="small mb-3",
+            ),
 
             html.Div([
                 dbc.Row([
@@ -1085,33 +1076,6 @@ def create_variant_table(variants):
     ], size="sm", striped=True)
 
     return table
-
-
-@app.callback(
-    Output('navigate-to-haplotype-store', 'data'),
-    Input({'type': 'haplotype-link-btn', 'index': dash.ALL}, 'n_clicks'),
-    prevent_initial_call=True
-)
-def navigate_to_haplotype_explorer(n_clicks):
-    """Store haplotype name and trigger navigation to Haplotype Explorer tab"""
-    triggered = ctx.triggered_id
-
-    if not triggered or not isinstance(triggered, dict):
-        return no_update
-
-    if triggered.get('type') != 'haplotype-link-btn':
-        return no_update
-
-    if n_clicks:
-        has_real_click = any(clicks and clicks > 0 for clicks in n_clicks)
-        if not has_real_click:
-            return no_update
-
-    haplotype_name = triggered.get('index')
-    if not haplotype_name:
-        return no_update
-
-    return {'haplotype_name': haplotype_name}
 
 
 @app.callback(
