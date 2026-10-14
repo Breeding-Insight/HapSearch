@@ -9,8 +9,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import pandas as pd
 
 
-_DAI_TOKEN_RE = re.compile(r"(D[Aa][IiLl](?:\d{2})?-\d+)", re.IGNORECASE)
-_DAI_TOKEN_NORMALIZE_DASH_RE = re.compile(r"(D[Aa][IiLl](?:\d{2})?)_(\d+)", re.IGNORECASE)
+# DArT order prefix: "D" + crop code + 2-digit year, e.g. DAl21 (alfalfa) or
+# DPec23 (pecan). Alfalfa's DAl is also accepted in any case, as DAI, and
+# without the year, as older files spell it.
+_DART_PREFIX = r"(?:(?i:da[il])(?:\d{2})?|D[A-Z][a-z]{1,3}\d{2})"
+_DAI_TOKEN_RE = re.compile(rf"({_DART_PREFIX}-\d+)")
+_DAI_TOKEN_NORMALIZE_DASH_RE = re.compile(rf"({_DART_PREFIX})_(\d+)")
 _INTERNAL_PROJECT_RE = re.compile(r"^P\d{2}$", re.IGNORECASE)
 _VALIDATION_RE = re.compile(r"validation", re.IGNORECASE)
 
@@ -36,7 +40,7 @@ def _safe_text(value: Any) -> str:
 
 
 def extract_dai_tokens(text: str) -> List[str]:
-    """Extract ordered unique DAI/DAl tokens from free text."""
+    """Extract ordered unique DArT order tokens (DAl..., DPec...) from free text."""
     seen = set()
     tokens: List[str] = []
     for match in _DAI_TOKEN_RE.finditer(_safe_text(text)):

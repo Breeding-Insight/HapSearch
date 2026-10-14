@@ -1184,7 +1184,7 @@ def get_projects_for_sample_presence(db: DatabaseManager,
     )
 
 
-_DAL_PATTERN = re.compile(r"DAl(\d{2})-(\d+)")
+_DAL_PATTERN = re.compile(r"D[A-Za-z]{2,4}(\d{2})-(\d+)")
 
 
 def _get_species_project_descriptions(

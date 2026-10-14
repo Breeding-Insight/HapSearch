@@ -135,7 +135,7 @@ class PresenceImporter:
 
         if not source_key:
             raise ValueError(
-                f"No DAI/DAl token found in sample-level file name: {os.path.basename(csv_path)}"
+                f"No DArT order token (DAl..., DPec...) found in sample-level file name: {os.path.basename(csv_path)}"
             )
 
         # Validation files with multiple DAI tags should remain grouped.

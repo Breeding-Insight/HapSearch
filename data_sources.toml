@@ -28,3 +28,10 @@ repo = "Breeding-Insight/alfalfa_haplotype_db"
 version = "v055"
 ref = "master"
 link = "Breeding-Insight-alfalfa_haplotype_db"
+
+[[source]]
+name = "pecan"
+repo = "Breeding-Insight/pecan_haplotype_db"
+version = "v009"
+ref = "main"
+link = "Breeding-Insight-pecan_haplotype_db"

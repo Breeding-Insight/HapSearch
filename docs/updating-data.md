@@ -21,7 +21,7 @@ data repository (copy [manifest.example.toml](manifest.example.toml) to start on
 ```text
 data/hapSearch/
   manifest.toml                  what goes into the database
-  HapSearch_mapping.csv          genotyping source (DAl...) -> project
+  HapSearch_mapping.csv          genotyping source (DAl..., DPec...) -> project
   HapSearch_owner_contacts.csv   project owners' contact details
   <probe design>.botloci         bottom-strand markers (optional)
   sample_hapStatus/              one *_hapStatus.csv per genotyping order
@@ -33,7 +33,7 @@ manifest points there with a path starting with `/` (the repository root).
 
 Rules the build enforces:
 
-- Every sample file name must contain its `DAl...` order number, and that number needs
+- Every sample file name must contain its DArT order number (`DAl...`, `DPec...`), and that number needs
   a row in `HapSearch_mapping.csv`. Every owner named there needs a row in
   `HapSearch_owner_contacts.csv`.
 - The FASTA must be the version the presence calls were made against. If more than 2%
@@ -48,7 +48,7 @@ is written once. Every update below is just adding or replacing files.
 
 | Update | What to do |
 |---|---|
-| New genotyping order | Add its `*_hapStatus.csv` to `sample_hapStatus/`, add a row for its `DAl...` number to `HapSearch_mapping.csv`, and add the owner to `HapSearch_owner_contacts.csv` if they are new. |
+| New genotyping order | Add its `*_hapStatus.csv` to `sample_hapStatus/`, add a row for its `DAl...`/`DPec...` number to `HapSearch_mapping.csv`, and add the owner to `HapSearch_owner_contacts.csv` if they are new. |
 | Re-called genotyping order | Replace the file in `sample_hapStatus/`. If the new file has a different name, delete the old one, or both are imported. |
 | New FASTA version | Commit the FASTA to `data/versions/` and its matrix as `hapPA/<fasta name>_hapPA_matrix.csv`. Nothing changes in HapSearch until you publish that version (below); the build stops if the version's matrix is missing. |
 | Mapping or contact changes | Edit `HapSearch_mapping.csv` or `HapSearch_owner_contacts.csv`; keep the file names. |
