@@ -309,13 +309,15 @@ def update_global_species_store(species_id):
     Input('selected-species-store', 'data'),
 )
 def load_global_programs(species_id):
-    """List the species' programs, all selected by default."""
+    """List the species' programs; none selected means all programs."""
     if not species_id:
         return [], []
     try:
         catalog = allele_filter.program_catalog(int(species_id))
         options = [{'label': group['label'], 'value': group['group_id']} for group in catalog]
-        return options, allele_filter.default_program_ids(int(species_id))
+        # Empty shows the "All programs" placeholder; every view treats an
+        # empty selection as all programs (allele_filter.default_program_ids).
+        return options, []
     except Exception:
         return [], []
 

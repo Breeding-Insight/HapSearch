@@ -8,7 +8,7 @@ This page provides a comprehensive overview with:
 Goals 2 & 3 (marker and haplotype search) are available in dedicated explorer tabs.
 """
 
-from dash import Patch, dcc, html, Input, Output, State, ctx, no_update
+from dash import dcc, html, Input, Output, State, ctx, no_update
 import dash_bootstrap_components as dbc
 import math
 import re
@@ -880,8 +880,7 @@ def _short_count(value):
 def _selection_shapes(ids, private, allele_filter_value):
     """Outline for the active filter: a pair's cell, or a program's private bar.
 
-    Orange over a white halo, so it shows on dark and light cells alike. Kept
-    separate so a filter change only patches these shapes, not the figure.
+    Orange over a white halo, so it shows on dark and light cells alike.
     """
     position = {group_id: index for index, group_id in enumerate(ids)}
     value = allele_filter_value or ""
@@ -1086,48 +1085,33 @@ def update_accumulation_curve(species_id, n_clicks):
     Output('overview-sharing-chart-state', 'data'),
     Input('selected-species-store', 'data'),
     Input('global-programs-dropdown', 'value'),
-    State('global-allele-filter', 'value'),
+    Input('global-allele-filter', 'value'),
 )
 def update_sharing_chart(species_id, program_ids, allele_filter_value):
-    """Alleles shared between the selected programs.
+    """Alleles shared between the selected programs, with the active filter outlined.
 
-    The filter outline and the "shared by all" button state are updated by
-    their own callbacks, so changing the filter doesn't redraw the chart.
+    This is the only callback that writes the chart. Changing programs also
+    resets the allele filter, re-triggering it while the first run may still
+    be computing; Dash then keeps only the newer run, which carries both the
+    current programs and the current filter. A second callback patching the
+    same figure made Dash discard the slower full rebuild and leave the chart
+    on the previous programs.
     """
     if not species_id:
         return "", _message_figure("Please select a species", 300), {}
 
     try:
         summary = _sharing_summary(allele_filter.sharing_data(int(species_id), program_ids))
-        # Clicks report program names (label_ids maps them back to group ids);
-        # the outline callback needs each row's id and private count.
-        chart_state = {
-            "label_ids": dict(zip(summary["labels"], summary["ids"])),
-            "ids": summary["ids"],
-            "private": summary["private"],
-        }
-        figure = _build_sharing_figure(summary, allele_filter_value)
-        return _sharing_headline(summary, allele_filter_value), figure, chart_state
+        # Clicks report program names; label_ids maps them back to group ids.
+        chart_state = {"label_ids": dict(zip(summary["labels"], summary["ids"]))}
+        return (
+            _sharing_headline(summary, allele_filter_value),
+            _build_sharing_figure(summary, allele_filter_value),
+            chart_state,
+        )
 
     except Exception as e:
         return "", _message_figure(f"Error: {str(e)}", 300), {}
-
-
-@app.callback(
-    Output('overview-sharing-chart', 'figure', allow_duplicate=True),
-    Output('overview-filter-shared-all', 'className'),
-    Input('global-allele-filter', 'value'),
-    State('overview-sharing-chart-state', 'data'),
-    prevent_initial_call=True
-)
-def show_selected_filter(allele_filter_value, chart_state):
-    """Move the outline and set the "shared by all" button without redrawing."""
-    figure = Patch()
-    figure['layout']['shapes'] = _selection_shapes(
-        (chart_state or {}).get("ids") or [], (chart_state or {}).get("private") or [],
-        allele_filter_value)
-    button = "btn btn-sm sharing-all-btn" + (" active" if allele_filter_value == allele_filter.ALL else "")
-    return figure, button
 
 
 @app.callback(
