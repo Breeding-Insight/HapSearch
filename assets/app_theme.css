@@ -317,6 +317,60 @@ body {
   width: 100%;
 }
 
-.overview-density-loading-region {
-  min-height: 34rem;
+.overview-sharing-loading-region {
+  min-height: 260px;
+}
+
+.overview-genome-loading-region {
+  min-height: 380px;
+}
+
+/* Sharing chart: bars and cells open an allele list below the chart. */
+#overview-sharing-chart .nsewdrag {
+  cursor: pointer;
+}
+
+
+.overview-filter-status {
+  border-top: 1px solid var(--app-border);
+  padding-top: 0.75rem;
+}
+/* Filter by Programs: the "shared by all" filter button above the chart. */
+.sharing-all-btn {
+  border: 1px solid #b9c7ca;
+  background: var(--app-surface);
+  color: var(--app-ink);
+  font-weight: 600;
+}
+
+.sharing-all-btn:hover {
+  border-color: var(--app-teal);
+  background: var(--app-surface-alt);
+  color: var(--app-teal-strong);
+}
+
+.sharing-all-btn.active {
+  border-color: var(--app-teal);
+  background: var(--app-teal);
+  color: #ffffff;
+}
+
+.sharing-all-count {
+  margin-left: 0.5rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: var(--app-surface-tint);
+  color: var(--app-teal-strong);
+  font-size: 0.8rem;
+}
+
+.sharing-all-btn.active .sharing-all-count {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.sharing-hint {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--app-ink);
 }

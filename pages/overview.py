@@ -8,8 +8,13 @@ This page provides a comprehensive overview with:
 Goals 2 & 3 (marker and haplotype search) are available in dedicated explorer tabs.
 """
 
-from dash import dcc, html, Input, Output, State, ctx, no_update, MATCH
+from dash import Patch, dcc, html, Input, Output, State, ctx, no_update
 import dash_bootstrap_components as dbc
+import math
+import re
+import statistics
+from collections import Counter
+
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -22,19 +27,32 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Import app for callback registration
 from dash_app import app
 
+from database import allele_filter
 from database.db_manager import DatabaseManager
 from database.queries import (
-    get_chromosome_counts,
     get_database_statistics,
     get_allele_density_by_position,
     get_microhaplotype_accumulation_data,
-    get_microhaplotype_project_sharing_data,
     get_species_snapshot,
 )
+from design.colors import (
+    APP_BORDER,
+    APP_INK,
+    APP_INK_MUTED,
+    APP_TEAL,
+    CHART_GENOME_ALTERNATE,
+    CHART_HIGHLIGHT,
+    CHART_PROJECTION,
+    CHART_SERIES,
+    CHART_HEATMAP_SCALE,
+)
 
-OVERVIEW_BRAND_DARK_GREEN = "#245842"
-OVERVIEW_DENSITY_COLOR = OVERVIEW_BRAND_DARK_GREEN
-OVERVIEW_SINGLE_COLOR = OVERVIEW_BRAND_DARK_GREEN
+# Outline of the selected cell or bar on the sharing chart: orange stands out
+# against the teal scale at every shade.
+SELECTION_COLOR = "#E8692C"
+
+# Loci at or above this percentile of alleles per locus are highlighted.
+HIGHLIGHT_PERCENTILE = 99
 PLOT_STATIC_CONFIG = {"displayModeBar": False}
 ACCUMULATION_PROJECTION_SAMPLES = 4000
 ACCUMULATION_MAX_PLOT_POINTS = 1200
@@ -44,7 +62,10 @@ def _overview_loading(children, class_name="overview-loading-region"):
     return dcc.Loading(
         html.Div(children, className=class_name),
         type="circle",
-        color="#319B42",
+        color=APP_TEAL,
+        # Quick updates (e.g. changing the allele filter) shouldn't flash a
+        # spinner over the chart; slow ones still show it.
+        delay_show=500,
     )
 
 
@@ -125,7 +146,8 @@ def _plot_export_controls(
                     ),
                 ],
                 label=[html.I(className="fas fa-floppy-disk me-2"), "Save"],
-                color="danger",
+                color="secondary",
+                toggle_class_name="haplo-action-btn",
                 size="sm",
                 align_end=True,
                 className="d-inline-block",
@@ -136,18 +158,57 @@ def _plot_export_controls(
     )
 
 # Layout
+# Overview: how alleles are shared between the selected programs. Clicking the
+# chart sets the global allele filter that the other tabs follow.
 layout = dbc.Container([
-    #Chromosome Counts + Species Snapshot
+    # Microhaplotype sharing between programs
     dbc.Row([
         dbc.Col([
             dbc.Card([
                 dbc.CardHeader([
-                    html.I(className="fas fa-chart-bar me-2"),
-                    "Microhaplotype Counts per Chromosome"
+                    html.I(className="fas fa-circle-nodes me-2"),
+                    "Alleles Shared Between Programs"
+                ]),
+                dbc.CardBody([
+                    html.Div([
+                        html.Div(id='overview-sharing-summary'),
+                        _plot_export_controls(
+                            "sharing",
+                            graph_id="overview-sharing-chart",
+                            filename="microhaplotype_sharing_distribution",
+                            default_width=11,
+                            default_height=7.5,
+                        ),
+                    ], className="d-flex justify-content-between align-items-start gap-3 mb-2"),
+                    _overview_loading(
+                        dcc.Graph(
+                            id='overview-sharing-chart',
+                            config=PLOT_STATIC_CONFIG
+                        ),
+                        "overview-loading-region overview-sharing-loading-region",
+                    ),
+                    dcc.Store(id='overview-sharing-chart-state'),
+                    html.Div(id='overview-filter-status', className="overview-filter-status mt-2"),
+                ])
+            ], className="h-100 w-100")
+        ], width=12, className="mb-4 d-flex")
+    ], className="g-3"),
+
+], fluid=True)
+
+# Database Overview: the panel and database as a whole.
+database_layout = dbc.Container([
+    # Alleles per locus + Species Snapshot
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.I(className="fas fa-chart-column me-2"),
+                    "Alleles per Locus"
                 ]),
                 dbc.CardBody([
                     _overview_loading(
-                        dcc.Graph(id='overview-chromosome-chart', config={'displayModeBar': False}),
+                        dcc.Graph(id='overview-allele-distribution-chart', config={'displayModeBar': False}),
                         "overview-loading-region overview-top-loading-region",
                     )
                 ])
@@ -169,26 +230,26 @@ layout = dbc.Container([
         ], lg=5, width=12, className="d-flex")
     ], className="mb-4 g-3 align-items-stretch"),
 
-    # Microhapotype Density Visualization
+    # Genome-wide alleles per locus
     dbc.Row([
         dbc.Col([
             dbc.Card([
                 dbc.CardHeader([
                     html.I(className="fas fa-chart-area me-2"),
-                    "Microhapotypes Density Across Chromosome Positions",
-                    html.Small(" (microhapotypes counts at each genomic position)", className="text-muted ms-2")
+                    "Alleles per Locus Across the Genome",
                 ]),
                 dbc.CardBody([
+                    html.Div(id='overview-genome-plot-caption', className="small mb-2"),
                     _overview_loading(
-                        html.Div(id='overview-position-density-grid'),
-                        "overview-loading-region overview-density-loading-region",
+                        dcc.Graph(id='overview-genome-plot', config={'displayModeBar': False}),
+                        "overview-loading-region overview-genome-loading-region",
                     )
                 ])
             ], className="mb-4")
         ], width=12)
     ]),
 
-    # Microhaplotype Accumulation + Sharing Distribution
+    # Microhaplotype accumulation
     dbc.Row([
         dbc.Col([
             dbc.Card([
@@ -200,7 +261,7 @@ layout = dbc.Container([
                     dbc.Button(
                         [html.I(className="fas fa-play me-2"), "Load Curve"],
                         id="overview-load-accumulation-btn",
-                        color="danger",
+                        color="primary",
                         size="sm",
                         className="mb-2",
                     ),
@@ -214,55 +275,14 @@ layout = dbc.Container([
                     _overview_loading(
                         dcc.Graph(
                             id='overview-accumulation-chart',
-                            config=PLOT_STATIC_CONFIG
+                            config=PLOT_STATIC_CONFIG,
+                            responsive=True,  # fill the full-width card
                         ),
                         "overview-loading-region overview-graph-loading-region",
                     )
                 ])
             ], className="h-100 w-100")
-        ], lg=6, width=12, className="mb-4 d-flex"),
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader([
-                    html.I(className="fas fa-circle-nodes me-2"),
-                    "Microhaplotype Sharing Distribution"
-                ]),
-                dbc.CardBody([
-                    html.Div(
-                        [
-                            html.Label(
-                                "Programs",
-                                htmlFor="overview-sharing-program-groups",
-                                className="fw-bold small mb-1",
-                            ),
-                            dcc.Dropdown(
-                                id="overview-sharing-program-groups",
-                                options=[],
-                                value=[],
-                                multi=True,
-                                clearable=False,
-                                placeholder="Choose programs",
-                            ),
-                        ],
-                        className="mb-3",
-                    ),
-                    _plot_export_controls(
-                        "sharing",
-                        graph_id="overview-sharing-chart",
-                        filename="microhaplotype_sharing_distribution",
-                        default_width=11,
-                        default_height=7.5,
-                    ),
-                    _overview_loading(
-                        dcc.Graph(
-                            id='overview-sharing-chart',
-                            config=PLOT_STATIC_CONFIG
-                        ),
-                        "overview-loading-region overview-graph-loading-region",
-                    )
-                ])
-            ], className="h-100 w-100")
-        ], lg=6, width=12, className="mb-4 d-flex")
+        ], width=12, className="mb-4 d-flex")
     ], className="g-3 align-items-stretch")
 
 ], fluid=True)
@@ -360,76 +380,207 @@ def _downsample_accumulation_rows(accumulation_rows, max_points=ACCUMULATION_MAX
     return [accumulation_rows[index] for index in np.unique(sampled_indices)]
 
 
-def _build_density_color_map(items):
-    """Map chromosome names to the shared density chart color."""
-    return {item: OVERVIEW_DENSITY_COLOR for item in items}
+
+def _natural_key(value):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(value))]
+
+
+def _message_figure(message, height=300):
+    fig = go.Figure()
+    fig.update_layout(
+        template="plotly_white",
+        height=height,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        annotations=[dict(text=message, showarrow=False, font=dict(color=APP_INK))],
+    )
+    return fig
+
+
+def _highlight_threshold(allele_counts):
+    """Smallest allele count in the top HIGHLIGHT_PERCENTILE of loci."""
+    return max(2, int(math.ceil(np.percentile(allele_counts, HIGHLIGHT_PERCENTILE))))
+
+
+def _allele_distribution_figure(allele_counts, highlight_min):
+    """Histogram of alleles per locus; the highlighted tail is one bar."""
+    histogram = Counter(allele_counts)
+    first = min(allele_counts)
+    values = list(range(first, highlight_min))
+    labels = [str(value) for value in values] + [f"≥{highlight_min}"]
+    loci = [histogram.get(value, 0) for value in values]
+    loci.append(sum(n for value, n in histogram.items() if value >= highlight_min))
+    colors = [CHART_SERIES] * len(values) + [CHART_HIGHLIGHT]
+
+    fig = go.Figure(go.Bar(
+        x=labels,
+        y=loci,
+        marker_color=colors,
+        hovertemplate="%{x} alleles: %{y:,} loci<extra></extra>",
+    ))
+
+    median = statistics.median(allele_counts)
+    if first <= median < highlight_min:
+        median_x = median - first  # category index on the x-axis
+        fig.add_shape(
+            type="line", xref="x", yref="paper",
+            x0=median_x, x1=median_x, y0=0, y1=1,
+            line=dict(color=APP_INK, width=1, dash="dot"),
+        )
+        fig.add_annotation(
+            x=median_x, y=1, xref="x", yref="paper",
+            text=f"median {median:g}", showarrow=False,
+            xanchor="left", yanchor="top", xshift=4,
+            font=dict(color=APP_INK, size=11),
+        )
+    fig.add_annotation(
+        x=len(labels) - 1, y=loci[-1], xref="x", yref="y",
+        text=f"top {100 - HIGHLIGHT_PERCENTILE}%", showarrow=False,
+        yanchor="bottom", yshift=4, font=dict(color=APP_INK, size=11),
+    )
+    fig.update_layout(
+        template="plotly_white",
+        height=300,
+        bargap=0.12,
+        showlegend=False,
+        dragmode=False,
+        margin=dict(t=20, l=55, r=15, b=45),
+        xaxis=dict(title="Alleles per locus", type="category", fixedrange=True,
+                   tickangle=0, nticks=20),
+        yaxis=dict(title="Loci", fixedrange=True, automargin=True),
+    )
+    return fig
+
+
+def _genome_locus_figure(rows, highlight_min):
+    """Alleles per locus along the genome, chromosomes laid end to end."""
+    by_chrom = {}
+    for row in rows:
+        by_chrom.setdefault(row['chromosome_name'], []).append(row)
+    chromosomes = sorted(by_chrom, key=_natural_key)
+    longest = max(max(r['position'] or 0 for r in by_chrom[c]) for c in chromosomes)
+    gap = longest * 0.03
+
+    series = {0: ([], [], []), 1: ([], [], []), 'highlight': ([], [], [])}
+    tick_values, tick_text = [], []
+    offset = 0
+    for index, chrom in enumerate(chromosomes):
+        loci = by_chrom[chrom]
+        chrom_end = max(r['position'] or 0 for r in loci)
+        for row in loci:
+            key = 'highlight' if row['allele_count'] >= highlight_min else index % 2
+            xs, ys, data = series[key]
+            xs.append(offset + (row['position'] or 0))
+            ys.append(row['allele_count'])
+            data.append([row['marker_id'], chrom, row['position'] or 0])
+        total = sum(r['allele_count'] for r in loci)
+        tick_values.append(offset + chrom_end / 2)
+        tick_text.append(f"{chrom}<br><span style='font-size:10px'>{total:,}</span>")
+        offset += chrom_end + gap
+
+    hover = (
+        "<b>%{customdata[0]}</b><br>"
+        "%{customdata[1]}: %{customdata[2]:,} bp<br>"
+        "%{y} alleles<extra></extra>"
+    )
+    fig = go.Figure()
+    for key in (0, 1):
+        xs, ys, data = series[key]
+        fig.add_trace(go.Scattergl(
+            x=xs, y=ys, customdata=data, mode="markers",
+            marker=dict(size=4, color=CHART_GENOME_ALTERNATE[key]),
+            hovertemplate=hover, showlegend=False,
+        ))
+    xs, ys, data = series['highlight']
+    fig.add_trace(go.Scattergl(
+        x=xs, y=ys, customdata=data, mode="markers",
+        marker=dict(size=7, color=CHART_HIGHLIGHT, line=dict(width=1, color="#ffffff")),
+        hovertemplate=hover, showlegend=False,
+    ))
+    fig.add_hline(
+        y=highlight_min, line=dict(color=CHART_HIGHLIGHT, width=1, dash="dot"),
+        annotation_text=f"top {100 - HIGHLIGHT_PERCENTILE}% (≥{highlight_min} alleles)",
+        annotation_position="top left",
+        annotation_font=dict(color=APP_INK, size=11),
+    )
+    fig.update_layout(
+        template="plotly_white",
+        height=380,
+        dragmode="zoom",
+        hovermode="closest",
+        margin=dict(t=20, l=55, r=15, b=70),
+        xaxis=dict(title="Chromosome (microhaplotype count)", tickmode="array",
+                   tickvals=tick_values, ticktext=tick_text,
+                   showgrid=False, zeroline=False, range=[-gap, offset]),
+        yaxis=dict(title="Alleles per locus", fixedrange=True, rangemode="tozero"),
+    )
+    return fig
+
 
 @app.callback(
-    Output('overview-chromosome-chart', 'figure'),
+    Output('overview-allele-distribution-chart', 'figure'),
+    Output('overview-genome-plot', 'figure'),
+    Output('overview-genome-plot-caption', 'children'),
     Input('selected-species-store', 'data')
 )
-def update_chromosome_chart(species_id):
-    """Update chromosome counts visualization (Goal 1)"""
+def update_locus_charts(species_id):
+    """Alleles per locus: overall distribution and along the genome."""
     if not species_id:
-        return go.Figure().update_layout(
-            title="Please select a species",
-            template="plotly_white"
-        )
+        message = "Please select a species"
+        return _message_figure(message), _message_figure(message, 380), ""
 
     try:
         db = DatabaseManager()
         with db.shared_connection():
-            counts = get_chromosome_counts(db, species_id)
+            rows = get_allele_density_by_position(db, species_id)
+        if not rows:
+            message = "No locus data available"
+            return _message_figure(message), _message_figure(message, 380), ""
 
-        if not counts:
-            return go.Figure().update_layout(
-                title="No data available",
-                template="plotly_white"
-            )
-
-        # Get chromosome names and counts
-        chromosomes = [c['chromosome_name'] for c in counts]
-        microhap_counts = [c['microhaplotype_count'] for c in counts]
-
-        # Single-color bars for readability across chromosome labels
-        bar_color = OVERVIEW_SINGLE_COLOR
-        colors = [bar_color for _ in chromosomes]
-
-        # Create bar chart
-        fig = go.Figure(data=[
-            go.Bar(
-                x=chromosomes,
-                y=microhap_counts,
-                marker_color=colors,
-                text=microhap_counts,
-                textposition='outside',
-                cliponaxis=False,
-            )
-        ])
-
-        # Calculate y-axis range with padding for text labels
-        max_count = max(microhap_counts) if microhap_counts else 0
-        # Add extra headroom so outside text isn't clipped
-        y_max = max_count * 1.30  # 30% padding at top for labels
-
-        fig.update_layout(
-            xaxis_title="Chromosome",
-            yaxis_title="Microhaplotype Count",
-            xaxis=dict(fixedrange=True),
-            yaxis=dict(range=[0, y_max], fixedrange=True, automargin=True),
-            template="plotly_white",
-            height=300,
-            showlegend=False,
-            dragmode=False
+        allele_counts = [row['allele_count'] for row in rows]
+        highlight_min = _highlight_threshold(allele_counts)
+        caption = [
+            html.Div([
+                "Each dot is a locus, placed by its position along the genome and its number of alleles. ",
+                html.Span("Teal dots", style={'color': CHART_HIGHLIGHT, 'fontWeight': '700'}),
+                f" are the top {100 - HIGHLIGHT_PERCENTILE}% (≥{highlight_min} alleles).",
+            ]),
+            html.Div([
+                html.Span([html.I(className="fas fa-hand-pointer me-1"), "Click a dot to open its alignment"],
+                          className="me-3"),
+                html.Span([html.I(className="fas fa-magnifying-glass-plus me-1"), "Drag to zoom"],
+                          className="me-3"),
+                html.Span([html.I(className="fas fa-rotate-left me-1"), "Double-click to reset"]),
+            ], className="mt-1", style={'color': APP_INK_MUTED}),
+        ]
+        return (
+            _allele_distribution_figure(allele_counts, highlight_min),
+            _genome_locus_figure(rows, highlight_min),
+            caption,
         )
-
-        return fig
 
     except Exception as e:
-        return go.Figure().update_layout(
-            title=f"Error: {str(e)}",
-            template="plotly_white"
-        )
+        message = f"Error: {str(e)}"
+        return _message_figure(message), _message_figure(message, 380), ""
+
+
+@app.callback(
+    Output('navigate-to-marker-store', 'data', allow_duplicate=True),
+    Output('main-tabs', 'active_tab', allow_duplicate=True),
+    Input('overview-genome-plot', 'clickData'),
+    prevent_initial_call=True
+)
+def open_clicked_locus(click_data):
+    """Open a clicked locus in the Multiple Sequence Alignment tab.
+
+    Switches the tab here rather than through navigate_between_tabs, whose
+    guard ignores navigation until the user has left the first tab once; a
+    click on the plot is always a deliberate action.
+    """
+    points = (click_data or {}).get('points') or []
+    if not points or not points[0].get('customdata'):
+        return no_update, no_update
+    return {'marker_id': points[0]['customdata'][0]}, 'marker-tab'
 
 
 SNAPSHOT_TILES = [
@@ -460,7 +611,7 @@ def _snapshot_tile(icon_cls: str, value, label: str, tooltip: str = None):
                 id=tip_id,
                 style={
                     'fontSize': '0.72rem',
-                    'color': '#245842',
+                    'color': APP_INK_MUTED,
                     'cursor': 'pointer',
                 },
             )
@@ -476,7 +627,7 @@ def _snapshot_tile(icon_cls: str, value, label: str, tooltip: str = None):
                     className=icon_cls,
                     style={
                         'fontSize': '1.15rem',
-                        'color': '#245842',
+                        'color': APP_INK_MUTED,
                         'flexShrink': '0',
                     },
                 ),
@@ -488,14 +639,14 @@ def _snapshot_tile(icon_cls: str, value, label: str, tooltip: str = None):
                                 'fontSize': '1.28rem',
                                 'fontWeight': '700',
                                 'lineHeight': '1.15',
-                                'color': '#212529',
+                                'color': APP_INK,
                             }
                         ),
                         html.Div(
                             label_children,
                             style={
                                 'fontSize': '0.72rem',
-                                'color': '#1f2933',
+                                'color': APP_INK,
                                 'lineHeight': '1.2',
                             }
                         ),
@@ -512,7 +663,7 @@ def _snapshot_tile(icon_cls: str, value, label: str, tooltip: str = None):
                 'padding': '0.55rem 0.75rem',
                 'backgroundColor': '#ffffff',
                 'borderRadius': '8px',
-                'border': '1px solid #245842',
+                'border': f'1px solid {APP_BORDER}',
             }
         ),
         width=6,
@@ -559,7 +710,7 @@ def update_species_snapshot(species_id):
                         'fontSize': '1.15rem',
                         'fontWeight': '700',
                         'color': '#000000',
-                        'borderBottom': '2px solid #245842',
+                        'borderBottom': f'2px solid {APP_BORDER}',
                         'paddingBottom': '0.5rem',
                         'marginBottom': '0.25rem',
                         'textAlign': 'center',
@@ -588,146 +739,6 @@ def update_species_snapshot(species_id):
         return dbc.Alert(f"Error: {str(e)}", color="danger")
 
 
-def _chrom_density_figure(chrom: str, positions, counts, chrom_color: str) -> go.Figure:
-    """Create a single-chromosome microhapotypes density figure."""
-    x_min = min(positions) if positions else 0
-    x_max = max(positions) if positions else 1
-    y_min = 0
-    y_max = (max(counts) * 1.1) if counts else 1
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=positions,
-            y=counts,
-            mode='lines',
-            fill='tozeroy',
-            name=chrom,
-            line=dict(color=chrom_color, width=1.5),
-            fillcolor=_hex_to_rgba(chrom_color, 0.30),
-            hovertemplate='<b>Position:</b> %{x:,}<br><b>Microhapotypes:</b> %{y}<extra></extra>',
-            showlegend=False
-        )
-    )
-
-    fig.update_layout(
-        template='plotly_white',
-        height=260,
-        margin=dict(l=45, r=15, t=15, b=35),
-        hovermode='x',
-        # Box-drag zoom should only affect x; y stays full via fixedrange=True on y-axis
-        dragmode='zoom',
-        meta={'original_x_range': [x_min, x_max]}
-    )
-
-    fig.update_xaxes(
-        title_text="Position",
-        showgrid=True,
-        gridcolor='lightgray',
-        range=[x_min, x_max],
-        fixedrange=False
-    )
-    fig.update_yaxes(
-        title_text="Microhapotypes Count",
-        showgrid=True,
-        gridcolor='lightgray',
-        range=[y_min, y_max],
-        fixedrange=True
-    )
-
-    return fig
-
-
-@app.callback(
-    Output('overview-position-density-grid', 'children'),
-    Input('selected-species-store', 'data')
-)
-def update_position_density_grid(species_id):
-    """Render per-chromosome density charts (one Graph per chromosome)."""
-    if not species_id:
-        return dbc.Alert("Please select a species to view microhapotypes density.", color="secondary")
-
-    try:
-        db = DatabaseManager()
-        with db.shared_connection():
-            density_data = get_allele_density_by_position(db, species_id)
-        if not density_data:
-            return dbc.Alert("No position data available.", color="secondary")
-
-        # Group by chromosome
-        chromosomes = {}
-        for row in density_data:
-            chrom = row['chromosome_name']
-            chromosomes.setdefault(chrom, {'positions': [], 'counts': []})
-            chromosomes[chrom]['positions'].append(row['position'])
-            chromosomes[chrom]['counts'].append(row['allele_count'])
-
-        sorted_chrom_names = sorted(chromosomes.keys())
-        color_map = _build_density_color_map(sorted_chrom_names)
-
-        cards = []
-        for chrom in sorted_chrom_names:
-            data = chromosomes[chrom]
-            fig = _chrom_density_figure(chrom, data['positions'], data['counts'], color_map[chrom])
-
-            cards.append(
-                dbc.Col(
-                    dbc.Card([
-                        dbc.CardHeader(
-                            html.Div([
-                                html.Span(chrom, className="fw-bold"),
-                                dbc.Button(
-                                    [html.I(className="fas fa-undo me-1"), "Reset"],
-                                    id={'type': 'density-reset-btn', 'chrom': chrom},
-                                    color="secondary",
-                                    size="sm",
-                                    outline=True,
-                                    className="haplo-action-btn"
-                                )
-                            ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center'})
-                        ),
-                        dbc.CardBody(
-                            dcc.Graph(
-                                id={'type': 'density-chrom-graph', 'chrom': chrom},
-                                figure=fig,
-                                config={'displayModeBar': False}
-                            )
-                        )
-                    ], className="h-100"),
-                    width=12,
-                    md=6,
-                    lg=4,
-                    className="mb-3"
-                )
-            )
-
-        return dbc.Row(cards)
-
-    except Exception as e:
-        return dbc.Alert(f"Error loading density charts: {str(e)}", color="danger")
-
-
-@app.callback(
-    Output({'type': 'density-chrom-graph', 'chrom': MATCH}, 'figure'),
-    Input({'type': 'density-reset-btn', 'chrom': MATCH}, 'n_clicks'),
-    State({'type': 'density-chrom-graph', 'chrom': MATCH}, 'figure'),
-    prevent_initial_call=True
-)
-def reset_density_chrom(_n_clicks, fig_dict):
-    """Reset x-zoom for a single chromosome chart."""
-    if not fig_dict:
-        return no_update
-    meta = (fig_dict.get('layout') or {}).get('meta') or {}
-    orig = meta.get('original_x_range')
-    if not (isinstance(orig, list) and len(orig) == 2):
-        return no_update
-
-    import copy
-    out = copy.deepcopy(fig_dict)
-    out.setdefault('layout', {}).setdefault('xaxis', {})['range'] = orig
-    return out
-
-
 def _build_accumulation_figure(accumulation_rows):
     """Build the cumulative microhaplotype discovery curve."""
     plot_rows = _downsample_accumulation_rows(accumulation_rows)
@@ -746,6 +757,8 @@ def _build_accumulation_figure(accumulation_rows):
         y_vals,
         projection_samples=ACCUMULATION_PROJECTION_SAMPLES,
     )
+    observed_color = CHART_SERIES
+    projection_color = CHART_PROJECTION
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -753,9 +766,9 @@ def _build_accumulation_figure(accumulation_rows):
         y=y_vals,
         customdata=hover_metadata,
         mode='lines',
-        line=dict(color=OVERVIEW_SINGLE_COLOR, width=2),
+        line=dict(color=observed_color, width=2),
         fill='tozeroy',
-        fillcolor=_hex_to_rgba(OVERVIEW_SINGLE_COLOR, 0.12),
+        fillcolor=_hex_to_rgba(observed_color, 0.12),
         name="Observed",
         hovertemplate=(
             '<b>Sample #%{x}</b><br>'
@@ -772,7 +785,7 @@ def _build_accumulation_figure(accumulation_rows):
             x=fit["x"],
             y=fit["y"],
             mode='lines',
-            line=dict(color="#6b7280", width=2, dash="dash"),
+            line=dict(color=projection_color, width=2, dash="dash"),
             name="Projection",
             hovertemplate=(
                 '<b>Projection</b><br>'
@@ -782,6 +795,17 @@ def _build_accumulation_figure(accumulation_rows):
         ))
         y_max_candidates.extend(fit["y"])
 
+    # Label the lines directly instead of using a legend.
+    if x_vals:
+        fig.add_annotation(
+            x=x_vals[-1], y=y_vals[-1],
+            text=(f"<b>Observed</b><br>{y_vals[-1]:,} microhaplotypes<br>"
+                  f"from {x_vals[-1]:,} samples"),
+            # Below the line, where the curve's last step won't run through it.
+            showarrow=False, xanchor="right", yanchor="top", xshift=-6, yshift=-40,
+            align="right", font=dict(color=APP_INK, size=11),
+            bgcolor="rgba(255, 255, 255, 0.85)",
+        )
     y_max = max(y_max_candidates) * 1.15 if y_max_candidates else 1
     fig.update_layout(
         xaxis_title="Samples added",
@@ -792,10 +816,12 @@ def _build_accumulation_figure(accumulation_rows):
                 fit["projected_x_max"] if fit else (max(x_vals) if x_vals else 1),
             ],
             fixedrange=True,
+            tickformat=",d",  # 15,000 rather than 15k
         ),
         yaxis=dict(
             range=[0, y_max],
             fixedrange=True,
+            tickformat=",d",  # 35,000 rather than 35k
         ),
         template="plotly_white",
         height=500,
@@ -806,284 +832,206 @@ def _build_accumulation_figure(accumulation_rows):
     return fig
 
 
-def _build_sharing_figure(sharing_data):
-    """Build the owner-group sharing distribution chart."""
-    projects = sharing_data.get("owner_groups") or sharing_data.get("projects") or []
-    intersections = sharing_data.get("intersections") or []
-
-    if not intersections or not projects:
-        return go.Figure().update_layout(
-            title="No project sharing data available",
-            template="plotly_white",
-            height=500,
-        )
-
-    fig = make_subplots(
-        rows=2,
-        cols=2,
-        specs=[
-            [{}, {}],
-            [{}, {}],
-        ],
-        column_widths=[0.24, 0.76],
-        row_heights=[0.62, 0.38],
-        horizontal_spacing=0.02,
-        vertical_spacing=0.04,
-    )
-
-    pattern_step = 1
-    pattern_x = list(range(1, len(intersections) + 1))
-    bar_counts = [row["microhaplotype_count"] for row in intersections]
-    project_ids = [
-        project.get("group_id", project.get("project_id"))
-        for project in projects
-    ]
-    project_labels = [project["label"] for project in projects]
-    project_names = {
-        project.get("group_id", project.get("project_id")): (
-            project.get("owner_name") or project.get("project_name")
-        )
-        for project in projects
-    }
-    project_labels_by_id = dict(zip(project_ids, project_labels))
-    intersection_hover_data = [
-        [
-            {
-                "common": "Common",
-                "rare": "Rare",
-                "private": "Private",
-            }.get(row.get("category"), row.get("category", "").title()),
-            " + ".join(
-                project_labels_by_id.get(group_id, str(group_id))
-                for group_id in (row.get("group_ids") or row.get("project_ids") or [])
-            ),
-        ]
-        for row in intersections
-    ]
-    category_colors = {
-        "common": OVERVIEW_BRAND_DARK_GREEN,
-        "rare": "#4f7f74",
-        "private": "#6b7280",
-    }
-    empty_category_colors = {
-        "common": "#d8e1dd",
-        "rare": "#dce7e5",
-        "private": "#e5e7eb",
-    }
-    bar_colors = [
-        category_colors.get(row["category"], OVERVIEW_SINGLE_COLOR)
-        if count
-        else empty_category_colors.get(row["category"], "#e5e7eb")
-        for row, count in zip(intersections, bar_counts)
-    ]
-    fig.add_trace(
-        go.Bar(
-            x=pattern_x,
-            y=bar_counts,
-            marker_color=bar_colors,
-            width=0.55,
-            text=[count if count else "" for count in bar_counts],
-            textposition="outside",
-            textfont=dict(
-                size=11,
-                family="Arial, sans-serif",
-                color="#1f2933",
-            ),
-            cliponaxis=False,
-            customdata=intersection_hover_data,
-            hovertemplate=(
-                "<b>%{y:,} microhaplotypes</b><br>"
-                "%{customdata[0]} intersection<br>"
-                "%{customdata[1]}<extra></extra>"
-            ),
-        ),
-        row=1,
-        col=2,
-    )
-
-    group_counts = {project_id: 0 for project_id in project_ids}
-    for row in intersections:
+def _sharing_summary(sharing_data):
+    """Alleles per program, private to each, and shared by each pair."""
+    groups = sharing_data.get("owner_groups") or sharing_data.get("projects") or []
+    ids = [group.get("group_id", group.get("project_id")) for group in groups]
+    labels = [group["label"] for group in groups]
+    index = {group_id: position for position, group_id in enumerate(ids)}
+    n = len(ids)
+    pair = [[0] * n for _ in range(n)]
+    total = [0] * n
+    private = [0] * n
+    shared_by_all = 0
+    for row in sharing_data.get("intersections") or []:
         count = int(row["microhaplotype_count"] or 0)
-        active_ids = row.get("group_ids") or row.get("project_ids") or []
-        for project_id in active_ids:
-            if project_id in group_counts:
-                group_counts[project_id] += count
+        members = [index[g] for g in (row.get("group_ids") or row.get("project_ids") or []) if g in index]
+        if not members or not count:
+            continue
+        for i in members:
+            total[i] += count
+            for j in members:
+                if i != j:
+                    pair[i][j] += count
+        if len(members) == 1:
+            private[members[0]] += count
+    # Programs with no alleles for this species would make "shared by all" zero
+    # and add an empty row and column, so they are listed separately instead.
+    keep = [i for i in range(n) if total[i]]
+    empty = [labels[i] for i in range(n) if not total[i]]
+    keep_set = set(keep)
+    for row in sharing_data.get("intersections") or []:
+        members = {index[g] for g in (row.get("group_ids") or row.get("project_ids") or []) if g in index}
+        if len(keep) > 1 and members & keep_set == keep_set:
+            shared_by_all += int(row["microhaplotype_count"] or 0)
+    return {"ids": [ids[i] for i in keep],
+            "labels": [labels[i] for i in keep],
+            "pair": [[pair[i][j] for j in keep] for i in keep],
+            "total": [total[i] for i in keep],
+            "private": [private[i] for i in keep],
+            "shared_by_all": shared_by_all,
+            "empty": empty}
 
-    row_step = 1
-    y_positions = [index * row_step for index in range(len(project_ids))]
-    project_y = {
-        project_id: y_position
-        for project_id, y_position in zip(project_ids, y_positions)
-    }
-    fig.add_trace(
-        go.Bar(
-            x=[group_counts[project_id] for project_id in project_ids],
-            y=y_positions,
-            orientation="h",
-            marker_color=OVERVIEW_SINGLE_COLOR,
-            width=0.28,
-            customdata=project_labels,
-            hovertemplate="%{customdata}: %{x:,} microhaplotypes<extra></extra>",
-            showlegend=False,
-        ),
-        row=2,
-        col=1,
-    )
 
-    all_bg_x = []
-    all_bg_y = []
-    for x in pattern_x:
-        for y in y_positions:
-            all_bg_x.append(x)
-            all_bg_y.append(y)
+def _short_count(value):
+    return f"{value / 1000:.1f}k" if value >= 1000 else str(value)
 
-    fig.add_trace(
-        go.Scatter(
-            x=all_bg_x,
-            y=all_bg_y,
-            mode="markers",
-            marker=dict(size=5, color="#d8d8d8"),
-            hoverinfo="skip",
-            showlegend=False,
-        ),
-        row=2,
-        col=2,
-    )
 
-    active_x = []
-    active_y = []
-    active_text = []
-    for x, row in zip(pattern_x, intersections):
-        active_ids = row.get("group_ids") or row.get("project_ids") or []
-        ys = [project_y[pid] for pid in active_ids if pid in project_y]
-        if len(ys) > 1:
-            fig.add_trace(
-                go.Scatter(
-                    x=[x, x],
-                    y=[min(ys), max(ys)],
-                    mode="lines",
-                    line=dict(color="#333333", width=1),
-                    hoverinfo="skip",
-                    showlegend=False,
-                ),
-                row=2,
-                col=2,
-            )
-        for pid in active_ids:
-            if pid not in project_y:
-                continue
-            active_x.append(x)
-            active_y.append(project_y[pid])
-            active_text.append(project_names.get(pid, f"Owner {pid}"))
+def _selection_shapes(ids, private, allele_filter_value):
+    """Outline for the active filter: a pair's cell, or a program's private bar.
 
-    fig.add_trace(
-        go.Scatter(
-            x=active_x,
-            y=active_y,
-            mode="markers",
-            marker=dict(size=6, color="#333333"),
-            text=active_text,
-            hovertemplate="%{text}<extra></extra>",
-            showlegend=False,
-        ),
-        row=2,
-        col=2,
-    )
+    Orange over a white halo, so it shows on dark and light cells alike. Kept
+    separate so a filter change only patches these shapes, not the figure.
+    """
+    position = {group_id: index for index, group_id in enumerate(ids)}
+    value = allele_filter_value or ""
+    rect = None
+    if value.startswith("pair:"):
+        first, _, second = value[len("pair:"):].partition("|")
+        if first in position and second in position:
+            row, column = max(position[first], position[second]), min(position[first], position[second])
+            rect = dict(xref="x", yref="y", x0=column - 0.5, x1=column + 0.5, y0=row - 0.5, y1=row + 0.5)
+    elif value.startswith("only:") and value[len("only:"):] in position:
+        row = position[value[len("only:"):]]
+        rect = dict(xref="x2", yref="y2", x0=0, x1=private[row], y0=row - 0.38, y1=row + 0.38)
+    if rect is None:
+        return []
+    return [dict(type="rect", line=line, **rect)
+            for line in (dict(color="#ffffff", width=6), dict(color=SELECTION_COLOR, width=3))]
 
-    start = 0
-    while start < len(intersections):
-        category = intersections[start]["category"]
-        end = start
-        while end + 1 < len(intersections) and intersections[end + 1]["category"] == category:
-            end += 1
-        color = category_colors.get(category, OVERVIEW_SINGLE_COLOR)
-        category_label = {
-            "common": "Common",
-            "rare": "Rare",
-            "private": "Private",
-        }.get(category, category.title())
-        x0 = pattern_x[start] - (pattern_step / 2)
-        x1 = pattern_x[end] + (pattern_step / 2)
-        for subplot_row in (1, 2):
-            fig.add_vrect(
-                x0=x0,
-                x1=x1,
-                line_width=1,
-                line_color=color,
-                fillcolor=_hex_to_rgba(color, 0.035),
-                row=subplot_row,
-                col=2,
-            )
+
+def _build_sharing_figure(summary, allele_filter_value=None):
+    """Pairwise shared alleles between programs, plus each program's private alleles.
+
+    The active allele filter, if it is a pair or a single program, is outlined.
+    """
+    labels, pair, total, private = (
+        summary[key] for key in ("labels", "pair", "total", "private"))
+    n = len(labels)
+    if n == 0:
+        return _message_figure("No program sharing data available", 300)
+
+    # The matrix is symmetric, so only the lower triangle is drawn: one cell
+    # per pair. The last column would be empty, so it is dropped; the first
+    # row stays (empty) so every row lines up with its bar on the right. Each
+    # program's private alleles are in those bars.
+    columns = range(n - 1)
+
+    def share(i, j):
+        return f"{pair[i][j] / total[i]:.0%} of {labels[i]}'s alleles" if total[i] else ""
+
+    z = [[pair[i][j] if j < i else None for j in columns] for i in range(n)]
+    upper = max([value for row in z for value in row if value is not None] or [1])
+    text = [[_short_count(pair[i][j]) if j < i else "" for j in columns] for i in range(n)]
+    cell_data = [[f"{share(i, j)}<br>{share(j, i)}" if j < i else "" for j in columns]
+                 for i in range(n)]
+
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.55, 0.45], horizontal_spacing=0.06,
+                        shared_yaxes=True)
+    fig.add_trace(go.Heatmap(
+        z=z, x=labels[:-1], y=labels, text=text, texttemplate="%{text}",
+        # Rows carry numbered full names; columns show just the numbers.
+        textfont=dict(size=11), customdata=cell_data,
+        colorscale=[[0, CHART_HEATMAP_SCALE[0]], [1, CHART_HEATMAP_SCALE[1]]], zmin=0, zmax=upper,
+        xgap=2, ygap=2, showscale=False, hoverongaps=False,
+        hovertemplate="<b>%{y}</b> and <b>%{x}</b><br>%{z:,} shared alleles<br>"
+                      "%{customdata}<br><i>Click to list these alleles</i><extra></extra>",
+    ), row=1, col=1)
+
+    shared = [total[i] - private[i] for i in range(n)]
+    fig.add_trace(go.Bar(
+        y=labels, x=private, orientation="h", name="Private to the program",
+        marker=dict(color=CHART_HIGHLIGHT, line=dict(color="#ffffff", width=1)),
+        hovertemplate="%{y}<br>%{x:,} private alleles<br>"
+                      "<i>Click to list these alleles</i><extra></extra>",
+    ), row=1, col=2)
+    fig.add_trace(go.Bar(
+        y=labels, x=shared, orientation="h", name="Shared with another program",
+        marker=dict(color=CHART_GENOME_ALTERNATE[1], line=dict(color="#ffffff", width=1)),
+        customdata=total,
+        hovertemplate="%{y}<br>%{x:,} shared with another program<br>"
+                      "%{customdata:,} alleles in total<extra></extra>",
+    ), row=1, col=2)
+
+    fig.update_layout(shapes=_selection_shapes(summary["ids"], private, allele_filter_value))
+
+    # Label each program's bar at its end: private of total.
+    for label, private_count, total_count in zip(labels, private, total):
         fig.add_annotation(
-            x=(x0 + x1) / 2,
-            y=1.08,
-            xref="x2",
-            yref="paper",
-            text=f"<b>{category_label}</b>",
-            showarrow=False,
-            font=dict(
-                color=color,
-                size=13,
-                family="Arial, sans-serif",
-            ),
+            x=total_count, y=label, xref="x2", yref="y2",
+            text=f"{_short_count(private_count)} private of {_short_count(total_count)}",
+            showarrow=False, xanchor="left", xshift=6,
+            font=dict(color=APP_INK, size=11),
         )
-        start = end + 1
 
-    bar_y_max = max(max(bar_counts) * 1.25, 1) if bar_counts else 1
-    group_x_max = max(max(group_counts.values()) * 1.15, 1) if group_counts else 1
-    pattern_x_range = [0.5, len(intersections) + 0.5]
-    fig.update_xaxes(visible=False, fixedrange=True, row=1, col=1)
-    fig.update_yaxes(visible=False, fixedrange=True, row=1, col=1)
-    fig.update_xaxes(
-        showticklabels=False,
-        range=pattern_x_range,
-        fixedrange=True,
-        row=1,
-        col=2,
-    )
-    fig.update_yaxes(title_text="# Intersection alleles", range=[0, bar_y_max], fixedrange=True, row=1, col=2)
-    fig.update_xaxes(
-        title_text="# Alleles (Total)",
-        range=[group_x_max, 0],
-        fixedrange=True,
-        row=2,
-        col=1,
-    )
-    fig.update_yaxes(
-        tickmode="array",
-        tickvals=y_positions,
-        ticktext=project_labels,
-        range=[y_positions[-1] + 0.45, -0.45],
-        fixedrange=True,
-        row=2,
-        col=1,
-    )
-    fig.update_xaxes(
-        title_text="",
-        tickmode="array",
-        tickvals=pattern_x,
-        ticktext=["" for _ in pattern_x],
-        range=pattern_x_range,
-        fixedrange=True,
-        row=2,
-        col=2,
-    )
-    fig.update_yaxes(
-        showticklabels=False,
-        range=[y_positions[-1] + 0.45, -0.45],
-        fixedrange=True,
-        row=2,
-        col=2,
-    )
     fig.update_layout(
         template="plotly_white",
-        height=500,
-        showlegend=False,
+        barmode="stack",
+        height=140 + (60 if n <= 4 else 36) * n,
         dragmode=False,
-        margin=dict(t=55, l=20, r=15, b=55),
-        bargap=0.25,
+        bargap=0.3,
+        margin=dict(t=70, l=20, r=15, b=20),
+        legend=dict(orientation="h", x=1, xanchor="right", y=1.0, yanchor="bottom",
+                    traceorder="normal", font=dict(color=APP_INK, size=11)),
+        font=dict(color=APP_INK),
     )
+    numbers = [str(position + 1) for position in range(n - 1)]
+    numbered = [f"{position + 1}  {label}" for position, label in enumerate(labels)]
+    fig.update_xaxes(side="top", title_text="Alleles shared by each pair of programs",
+                     title_font=dict(size=12, color=APP_INK),
+                     fixedrange=True, automargin=True, constrain="domain",
+                     tickmode="array", tickvals=labels[:-1], ticktext=numbers, row=1, col=1)
+    # Square cells, however wide the card is.
+    fig.update_yaxes(autorange="reversed", fixedrange=True, automargin=True,
+                     scaleanchor="x", scaleratio=1, tickmode="array",
+                     tickvals=labels, ticktext=numbered, row=1, col=1)
+    fig.update_xaxes(fixedrange=True, showgrid=False, showticklabels=False,
+                     range=[0, max(total) * 1.45 if any(total) else 1], row=1, col=2)
     return fig
+
+
+def _sharing_headline(summary, allele_filter_value=None):
+    """The "shared by all" filter button and how to use the chart."""
+    n = len(summary["labels"])
+    empty_note = None
+    if summary["empty"]:
+        empty_note = html.Div("No alleles for this species: " + ", ".join(summary["empty"]) + ".",
+                              className="small mt-2")
+    if n < 2:
+        return empty_note
+    active = allele_filter_value == allele_filter.ALL
+    return html.Div([
+        html.Button(
+            [
+                html.I(className="fas fa-filter me-2"),
+                f"Shared by all {n} programs",
+                html.Span(f"{summary['shared_by_all']:,}", className="sharing-all-count"),
+            ],
+            id='overview-filter-shared-all',
+            type="button",
+            className="btn btn-sm sharing-all-btn" + (" active" if active else ""),
+            title="Filter to the alleles every selected program shares",
+        ),
+        html.Div([
+            html.I(className="fas fa-hand-pointer me-2"),
+            "Or click a cell or a teal bar. The filter applies to the Microhaplotypes and "
+            "Multiple Sequence Alignment tabs.",
+        ], className="sharing-hint"),
+        empty_note,
+    ])
+
+
+@app.callback(
+    Output('global-allele-filter', 'value', allow_duplicate=True),
+    Input('overview-filter-shared-all', 'n_clicks'),
+    State('global-allele-filter', 'value'),
+    prevent_initial_call=True
+)
+def filter_shared_by_all(n_clicks, current_value):
+    """Toggle the "shared by every selected program" filter."""
+    if not n_clicks:
+        return no_update
+    return allele_filter.ANY if current_value == allele_filter.ALL else allele_filter.ALL
 
 
 def _empty_accumulation_figure(title="Load the accumulation curve when needed"):
@@ -1133,55 +1081,145 @@ def update_accumulation_curve(species_id, n_clicks):
 
 
 @app.callback(
+    Output('overview-sharing-summary', 'children'),
     Output('overview-sharing-chart', 'figure'),
+    Output('overview-sharing-chart-state', 'data'),
     Input('selected-species-store', 'data'),
-    Input('overview-sharing-program-groups', 'value'),
+    Input('global-programs-dropdown', 'value'),
+    State('global-allele-filter', 'value'),
 )
-def update_sharing_chart(species_id, selected_group_ids):
-    """Owner-group microhaplotype sharing distribution."""
-    empty = go.Figure().update_layout(template="plotly_white")
+def update_sharing_chart(species_id, program_ids, allele_filter_value):
+    """Alleles shared between the selected programs.
 
+    The filter outline and the "shared by all" button state are updated by
+    their own callbacks, so changing the filter doesn't redraw the chart.
+    """
     if not species_id:
-        empty.update_layout(title="Please select a species")
-        return empty
+        return "", _message_figure("Please select a species", 300), {}
 
     try:
-        db = DatabaseManager()
-        with db.shared_connection():
-            sharing_data = get_microhaplotype_project_sharing_data(
-                db,
-                species_id,
-                selected_group_ids=selected_group_ids,
-            )
-
-        return _build_sharing_figure(sharing_data)
+        summary = _sharing_summary(allele_filter.sharing_data(int(species_id), program_ids))
+        # Clicks report program names (label_ids maps them back to group ids);
+        # the outline callback needs each row's id and private count.
+        chart_state = {
+            "label_ids": dict(zip(summary["labels"], summary["ids"])),
+            "ids": summary["ids"],
+            "private": summary["private"],
+        }
+        figure = _build_sharing_figure(summary, allele_filter_value)
+        return _sharing_headline(summary, allele_filter_value), figure, chart_state
 
     except Exception as e:
-        empty.update_layout(title=f"Error: {str(e)}")
-        return empty
+        return "", _message_figure(f"Error: {str(e)}", 300), {}
 
 
 @app.callback(
-    Output('overview-sharing-program-groups', 'options'),
-    Output('overview-sharing-program-groups', 'value'),
-    Input('selected-species-store', 'data')
+    Output('overview-sharing-chart', 'figure', allow_duplicate=True),
+    Output('overview-filter-shared-all', 'className'),
+    Input('global-allele-filter', 'value'),
+    State('overview-sharing-chart-state', 'data'),
+    prevent_initial_call=True
 )
-def update_sharing_group_options(species_id):
-    """Populate selectable program groups for the sharing UpSet plot."""
+def show_selected_filter(allele_filter_value, chart_state):
+    """Move the outline and set the "shared by all" button without redrawing."""
+    figure = Patch()
+    figure['layout']['shapes'] = _selection_shapes(
+        (chart_state or {}).get("ids") or [], (chart_state or {}).get("private") or [],
+        allele_filter_value)
+    button = "btn btn-sm sharing-all-btn" + (" active" if allele_filter_value == allele_filter.ALL else "")
+    return figure, button
+
+
+@app.callback(
+    Output('global-allele-filter', 'value', allow_duplicate=True),
+    Input('overview-sharing-chart', 'clickData'),
+    State('overview-sharing-chart-state', 'data'),
+    State('global-allele-filter', 'value'),
+    prevent_initial_call=True
+)
+def filter_from_sharing_chart(click_data, chart_state, current_value):
+    """Clicking a cell or a teal bar sets the global allele filter; clicking
+    the selected one again clears it.
+
+    Uses the clicked point's program names: Dash drops customdata for
+    heatmap cells, whose point numbers are [row, column] pairs.
+    """
+    points = (click_data or {}).get('points') or []
+    label_ids = (chart_state or {}).get("label_ids")
+    if not points or not label_ids:
+        return no_update
+    point = points[0]
+    row_label, column_label = point.get('y'), point.get('x')
+    value = None
+    if point.get('curveNumber') == 0 and row_label != column_label \
+            and row_label in label_ids and column_label in label_ids:
+        order = list(label_ids)  # chart order, which the filter options also use
+        first, second = sorted((row_label, column_label), key=order.index)
+        value = f"pair:{label_ids[first]}|{label_ids[second]}"
+    elif point.get('curveNumber') == 1 and row_label in label_ids:
+        value = f"only:{label_ids[row_label]}"
+    if value is None:
+        return no_update
+    return allele_filter.ANY if value == current_value else value
+
+
+@app.callback(
+    Output('overview-filter-status', 'children'),
+    Input('selected-species-store', 'data'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
+    State('global-allele-filter', 'options'),
+)
+def show_filter_status(species_id, program_ids, allele_filter_value, options):
+    """Say what the allele filter keeps and offer the tabs that use it."""
     if not species_id:
-        return [], []
-
+        return None
     try:
-        db = DatabaseManager()
-        with db.shared_connection():
-            sharing_data = get_microhaplotype_project_sharing_data(db, species_id)
+        kept = allele_filter.resolve_allele_filter(species_id, program_ids, allele_filter_value)
+    except Exception as e:
+        return dbc.Alert(f"Error: {str(e)}", color="danger")
+    if kept is None:
+        return html.Div(
+            "No allele filter: every allele is included. Click a cell or a teal bar to filter "
+            "the Microhaplotypes and Multiple Sequence Alignment tabs.",
+            className="small",
+        )
+    label = next((option['label'] for option in options or []
+                  if option['value'] == allele_filter_value), "Selected programs")
+    return html.Div([
+        html.Div([
+            html.I(className="fas fa-filter me-2", style={'color': APP_TEAL}),
+            html.Strong(label), f": {len(kept):,} alleles. ",
+            html.Button("Clear", id='overview-clear-filter', className="btn btn-link btn-sm p-0 align-baseline"),
+        ]),
+        html.Div([
+            html.Button([html.I(className="fas fa-magnifying-glass me-2"), "View in Microhaplotypes"],
+                        id='overview-open-haplotypes', className="btn btn-primary btn-sm me-2"),
+            html.Button([html.I(className="fas fa-align-left me-2"), "View loci in Multiple Sequence Alignment"],
+                        id='overview-open-alignment', className="btn btn-outline-secondary btn-sm haplo-action-btn"),
+        ], className="mt-2"),
+    ])
 
-        groups = sharing_data.get("available_owner_groups") or sharing_data.get("owner_groups") or []
-        options = [
-            {"label": group["label"], "value": group["group_id"]}
-            for group in groups
-        ]
-        return options, sharing_data.get("default_group_ids") or [opt["value"] for opt in options[:3]]
 
-    except Exception:
-        return [], []
+@app.callback(
+    Output('global-allele-filter', 'value', allow_duplicate=True),
+    Input('overview-clear-filter', 'n_clicks'),
+    prevent_initial_call=True
+)
+def clear_allele_filter(n_clicks):
+    return allele_filter.ANY if n_clicks else no_update
+
+
+@app.callback(
+    Output('main-tabs', 'active_tab', allow_duplicate=True),
+    Input('overview-open-haplotypes', 'n_clicks'),
+    Input('overview-open-alignment', 'n_clicks'),
+    prevent_initial_call=True
+)
+def open_filtered_tab(haplotype_clicks, alignment_clicks):
+    """Jump to a tab that follows the allele filter."""
+    if ctx.triggered_id == 'overview-open-haplotypes' and haplotype_clicks:
+        return 'haplotype-tab'
+    if ctx.triggered_id == 'overview-open-alignment' and alignment_clicks:
+        return 'marker-tab'
+    return no_update

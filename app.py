@@ -29,6 +29,7 @@ server.register_blueprint(auth_bp)
 
 # Import session helpers
 from auth.session import is_authenticated, get_current_user, start_local_dev_session
+from database import allele_filter
 from auth.user_store import get_user_store
 
 if config.USER_STORE_PREFLIGHT:
@@ -147,8 +148,8 @@ def serve_layout():
     tabs = [
         dbc.Tab(
             overview.layout,
-            label="Overview",
-            tab_id="overview-tab",
+            label="Filter by Programs",
+            tab_id="programs-tab",
             tab_style={"marginRight": "5px"}
         ),
         dbc.Tab(
@@ -162,6 +163,11 @@ def serve_layout():
             label="Multiple Sequence Alignment",
             tab_id="marker-tab",
             tab_style={"marginRight": "5px"}
+        ),
+        dbc.Tab(
+            overview.database_layout,
+            label="Database Overview",
+            tab_id="database-tab",
         ),
     ]
 
@@ -201,24 +207,33 @@ def serve_layout():
             ], className="app-header-right"),
         ], className="app-header"),
 
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.Label("Select Species:", className="fw-bold me-3 mb-0"),
-                            dcc.Dropdown(
-                                id='global-species-dropdown',
-                                placeholder="Select a species...",
-                                style={'minWidth': '300px'}
-                            )
-                        ], style={'display': 'flex', 'alignItems': 'center'})
-                    ])
-                ], className="mb-3")
-            ], width=12)
-        ]),
+        # Global filters: every tab follows the species, programs and alleles
+        # chosen here (see database/allele_filter.py).
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.Label("Species", htmlFor='global-species-dropdown',
+                                   className="fw-bold small mb-1"),
+                        dcc.Dropdown(id='global-species-dropdown', placeholder="Select a species..."),
+                    ], lg=3, md=12, className="mb-2 mb-lg-0"),
+                    dbc.Col([
+                        html.Label("Programs", htmlFor='global-programs-dropdown',
+                                   className="fw-bold small mb-1"),
+                        dcc.Dropdown(id='global-programs-dropdown', multi=True,
+                                     placeholder="All programs"),
+                    ], lg=5, md=12, className="mb-2 mb-lg-0"),
+                    dbc.Col([
+                        html.Label("Alleles", htmlFor='global-allele-filter',
+                                   className="fw-bold small mb-1"),
+                        dcc.Dropdown(id='global-allele-filter', value='any', clearable=False,
+                                     searchable=True),
+                    ], lg=4, md=12),
+                ], className="g-3"),
+            ])
+        ], className="mb-3 app-filter-bar"),
 
-        dbc.Tabs(tabs, id="main-tabs", active_tab="overview-tab", className="mb-4"),
+        dbc.Tabs(tabs, id="main-tabs", active_tab="programs-tab", className="mb-4"),
 
         html.Footer([
             html.Ul([
@@ -288,6 +303,37 @@ def update_global_species_store(species_id):
     return species_id
 
 
+@callback(
+    Output('global-programs-dropdown', 'options'),
+    Output('global-programs-dropdown', 'value'),
+    Input('selected-species-store', 'data'),
+)
+def load_global_programs(species_id):
+    """List the species' programs, all selected by default."""
+    if not species_id:
+        return [], []
+    try:
+        catalog = allele_filter.program_catalog(int(species_id))
+        options = [{'label': group['label'], 'value': group['group_id']} for group in catalog]
+        return options, allele_filter.default_program_ids(int(species_id))
+    except Exception:
+        return [], []
+
+
+@callback(
+    Output('global-allele-filter', 'options'),
+    Output('global-allele-filter', 'value'),
+    Input('global-programs-dropdown', 'value'),
+    State('selected-species-store', 'data'),
+)
+def load_allele_filter_options(program_ids, species_id):
+    """Offer allele filters for the selected programs; reset to all alleles."""
+    try:
+        return allele_filter.allele_filter_options(species_id, program_ids), allele_filter.ANY
+    except Exception:
+        return [], allele_filter.ANY
+
+
 # Callback to update database status header
 @callback(
     Output('db-status-header', 'children'),
@@ -333,7 +379,7 @@ def mark_app_initialized_on_tab_change(active_tab, current_initialized):
     """Mark app as initialized when user manually changes tabs"""
     if current_initialized:
         return no_update
-    if active_tab == "overview-tab":
+    if active_tab == "programs-tab":
         return False
     return True
 

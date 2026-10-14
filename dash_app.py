@@ -16,7 +16,9 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.FONT_AWESOME],
     assets_folder=_ASSETS_FOLDER,
     suppress_callback_exceptions=True,
-    title=config.APP_TITLE
+    title=config.APP_TITLE,
+    # Keep the browser tab title steady instead of "Updating..." on every callback.
+    update_title=None,
 )
 
 # Use the same favicon as the landing page (landing/assets/hapsearch-icon.png).

@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dash_app import app
 
+from database import allele_filter
 from database.db_manager import DatabaseManager
 from database.queries import (
     get_markers_paginated,
@@ -23,7 +24,12 @@ from database.queries import (
     get_botloci_count,
     is_bottom_locus
 )
-from design.colors import NUCLEOTIDE_COLORS
+from design.colors import CHART_HIGHLIGHT, NUCLEOTIDE_COLORS
+
+# Marks alignment rows that match the app's allele filter.
+FILTER_MARK_COLOR = CHART_HIGHLIGHT
+# Alleles outside the filter: grey row labels.
+FILTERED_OUT_COLOR = "#8A969A"
 from alignment.coordinates import (
     MSA_AXIS_TICK_FONT,
     MSA_AXIS_TITLE_FONT,
@@ -185,10 +191,13 @@ def load_chromosomes(species_id):
     Input('marker-chromosome-filter', 'value'),
     Input('marker-page-prev', 'n_clicks'),
     Input('marker-page-next', 'n_clicks'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     State('marker-results-page', 'data'),
     prevent_initial_call=True
 )
-def update_marker_page(search_term, sequence_search, species_id, chromosome_id, prev_clicks, next_clicks, current_page):
+def update_marker_page(search_term, sequence_search, species_id, chromosome_id, prev_clicks, next_clicks,
+                       program_ids, allele_filter_value, current_page):
     """Update page number based on filters or pagination component"""
     triggered = ctx.triggered_id if ctx.triggered else None
     
@@ -203,7 +212,9 @@ def update_marker_page(search_term, sequence_search, species_id, chromosome_id, 
                 search_marker_id=search_term,
                 search_sequence=sequence_search,
                 page=1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
             total_pages = result.get('total_pages', 1)
             total_count = result.get('total', 0)
@@ -221,7 +232,8 @@ def update_marker_page(search_term, sequence_search, species_id, chromosome_id, 
     page = current_page or 1
 
     # Reset to page 1 when filters change
-    if triggered in ['marker-search-input', 'marker-sequence-search-input', 'selected-species-store', 'marker-chromosome-filter']:
+    if triggered in ['marker-search-input', 'marker-sequence-search-input', 'selected-species-store', 'marker-chromosome-filter',
+                     'global-programs-dropdown', 'global-allele-filter']:
         page = 1
     elif triggered == 'marker-page-prev':
         page = max(1, page - 1)
@@ -249,9 +261,12 @@ def update_marker_page(search_term, sequence_search, species_id, chromosome_id, 
     Input('selected-species-store', 'data'),
     Input('marker-chromosome-filter', 'value'),
     Input('marker-results-page', 'data'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     prevent_initial_call=True
 )
-def search_markers(search_term, sequence_search, species_id, chromosome_id, current_page):
+def search_markers(search_term, sequence_search, species_id, chromosome_id, current_page,
+                   program_ids, allele_filter_value):
     """Search and display markers with pagination"""
     try:
         db = DatabaseManager()
@@ -263,7 +278,9 @@ def search_markers(search_term, sequence_search, species_id, chromosome_id, curr
                 search_marker_id=search_term,
                 search_sequence=sequence_search,
                 page=current_page or 1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
 
         if not result['markers']:
@@ -602,8 +619,13 @@ def get_allele_sort_key(haplotype_name):
         return (4, 0)  # Unknown type
 
 
-def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_strand=False):
-    """Create enhanced multiple sequence alignment visualization"""
+def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_strand=False,
+                      highlight_names=None):
+    """Create enhanced multiple sequence alignment visualization.
+
+    highlight_names: alleles matching the app's allele filter, marked with a
+    teal dot in the row labels.
+    """
     if not haplotypes:
         return go.Figure()
 
@@ -1002,7 +1024,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             autorange=True,  # Enable autoscaling (removed fixed range)
             tickmode='array',
             tickvals=list(range(len(haplotypes))),
-            ticktext=[f"{name.split('|')[-1]}" for name in haplotype_names],
+            ticktext=[_allele_row_label(name, highlight_names) for name in haplotype_names],
             tickfont=MSA_AXIS_TICK_FONT,
             title=dict(text='Allele Variant', font=MSA_AXIS_TITLE_FONT)
         ),
@@ -1014,11 +1036,24 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             l=150, 
             r=50
         ),
-        annotations=all_annotations
+        annotations=all_annotations,
+        # Row labels are clickable (assets/msa_allele_links.js), which reads
+        # the full allele names from here.
+        meta={'allele_names': haplotype_names},
     )
     fig.update_xaxes(title=dict(text=x_title, font=MSA_AXIS_TITLE_FONT))
 
     return fig
+
+
+def _allele_row_label(name, highlight_names):
+    """Row label: alleles matching the allele filter get a teal dot, the rest go grey."""
+    allele = name.split('|')[-1]
+    if highlight_names is None:
+        return allele
+    if name in highlight_names:
+        return f"<span style='color:{FILTER_MARK_COLOR}'>●</span> <b>{allele}</b>"
+    return f"<span style='color:{FILTERED_OUT_COLOR}'>{allele}</span>"
 
 
 def create_variant_table(variants):
@@ -1243,10 +1278,13 @@ def toggle_alignment_view(n_clicks, alignment_data):
      Output('alignment-status-message', 'children'),
      Output('show-original-btn', 'children')],
     [Input('marker-alignment-store', 'data'),
-     Input('marker-detail-store', 'data')],
+     Input('marker-detail-store', 'data'),
+     Input('global-allele-filter', 'value')],
+    State('global-programs-dropdown', 'value'),
+    State('selected-species-store', 'data'),
     prevent_initial_call=True
 )
-def update_msa_visualization(alignment_data, marker_id):
+def update_msa_visualization(alignment_data, marker_id, allele_filter_value, program_ids, species_id):
     """Update MSA visualization based on alignment status.
 
     Must react to BOTH marker-alignment-store (alignment finished) AND
@@ -1348,12 +1386,29 @@ def update_msa_visualization(alignment_data, marker_id):
         if botloci_warning:
             status_message = html.Div([botloci_warning, status_message])
 
+        highlight_names = None
+        kept = allele_filter.resolve_allele_filter(species_id, program_ids, allele_filter_value)
+        if kept is not None:
+            with db.shared_connection():
+                highlight_names = {
+                    row['haplotype_name'] for row in get_microhaplotypes_for_marker(db, marker_id)
+                    if row['id'] in kept
+                }
+            status_message = html.Div([
+                status_message,
+                html.Div([
+                    html.Span("●", style={'color': FILTER_MARK_COLOR}),
+                    " Alleles that match the selected filters",
+                ], className="small mt-2"),
+            ])
+
         msa_fig = create_msa_figure(
             haplotypes,
             variants,
             marker,
             is_aligned,
-            marker_is_bottom_strand
+            marker_is_bottom_strand,
+            highlight_names,
         )
 
         return msa_fig, status_message, button_text

@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Import app for callback registration
 from dash_app import app
 
+from database import allele_filter
 from database.db_manager import DatabaseManager
 from database.queries import (
     get_microhaplotypes_paginated,
@@ -513,6 +514,8 @@ def sync_haplotype_frequency_controls(_n_clicks, slider_value, min_input, max_in
     Input('haplotype-exclude-missing-samples', 'value'),
     Input('haplotype-page-prev', 'n_clicks'),
     Input('haplotype-page-next', 'n_clicks'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     State('haplotype-results-page', 'data'),
     prevent_initial_call=True
 )
@@ -526,6 +529,8 @@ def update_haplotype_page(
     exclude_missing_samples,
     prev_clicks,
     next_clicks,
+    program_ids,
+    allele_filter_value,
     current_page
 ):
     """Update page number based on filters or pagination component"""
@@ -549,7 +554,9 @@ def update_haplotype_page(
                 max_frequency=max_freq,
                 exclude_missing_samples=_exclude_missing_samples_enabled(exclude_missing_samples),
                 page=1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
             total_pages = result.get('total_pages', 1)
             total_count = result.get('total', 0)
@@ -567,7 +574,7 @@ def update_haplotype_page(
     page = current_page or 1
 
     # Reset to page 1 when filters change
-    if triggered in ['haplotype-sequence-search', 'selected-species-store', 'haplotype-marker-filter', 'haplotype-chromosome-filter', 'haplotype-sample-filter', 'haplotype-frequency-range', 'haplotype-exclude-missing-samples']:
+    if triggered in ['haplotype-sequence-search', 'selected-species-store', 'haplotype-marker-filter', 'haplotype-chromosome-filter', 'haplotype-sample-filter', 'haplotype-frequency-range', 'haplotype-exclude-missing-samples', 'global-programs-dropdown', 'global-allele-filter']:
         page = 1
     elif triggered == 'haplotype-page-prev':
         page = max(1, page - 1)
@@ -600,9 +607,11 @@ def update_haplotype_page(
     Input('haplotype-frequency-range', 'value'),
     Input('haplotype-exclude-missing-samples', 'value'),
     Input('haplotype-results-page', 'data'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     prevent_initial_call=True
 )
-def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, sample_filter, freq_range, exclude_missing_samples, current_page):
+def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, sample_filter, freq_range, exclude_missing_samples, current_page, program_ids=None, allele_filter_value=None):
     """Search and display haplotypes with pagination"""
     try:
         db = DatabaseManager()
@@ -621,7 +630,9 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
                 max_frequency=max_freq,
                 exclude_missing_samples=_exclude_missing_samples_enabled(exclude_missing_samples),
                 page=current_page or 1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
 
             if not result['microhaplotypes']:
