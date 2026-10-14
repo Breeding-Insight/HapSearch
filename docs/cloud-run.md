@@ -149,7 +149,7 @@ Cloud Run terminates HTTPS, so keep `TLS_ENABLED=false`. The ORCID redirect URI 
 ## Landing page
 
 The public landing page is the static site in `landing/`, published to GitHub Pages by
-`.github/workflows/pages.yml` on every push to `main` that changes it. It follows the
+`.github/workflows/pages.yml` on every push to `feature-MSA` that changes it. It follows the
 Breeding Insight pattern shared with HapApp and AlloMate: its sign-in links point at the
 Cloud Run service, and `landing/assets/wake.js` wakes the service through `/health` when a
 visitor clicks one, showing a "Starting HapSearch…" state during a cold start. Keep
