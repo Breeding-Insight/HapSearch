@@ -2,7 +2,15 @@ import os
 import tempfile
 import unittest
 
-from scripts.build_database import BuildError, fasta_stem, find_manifest, load_plan
+from scripts.build_database import (
+    BuildError,
+    BuildPlan,
+    _missing_hint,
+    check_metadata,
+    fasta_stem,
+    find_manifest,
+    load_plan,
+)
 
 MANIFEST = """
 [metadata]
@@ -81,6 +89,51 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(
             find_manifest(self.repo, None), os.path.join(root_hapsearch, "manifest.toml")
         )
+
+    def test_case_only_mismatch_is_pointed_out(self):
+        with open(self.manifest, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(self.manifest, "w", encoding="utf-8") as handle:
+            handle.write(text.replace('"Sample_hapStatus"', '"sample_hapStatus"'))
+
+        if os.path.isdir(os.path.join(self.hapsearch, "sample_hapStatus")):
+            self.skipTest("case-insensitive filesystem")
+        with self.assertRaisesRegex(BuildError, "Did you mean 'Sample_hapStatus'"):
+            load_plan(self.repo, os.path.join(self.repo, ".cache"))
+
+    def test_missing_folder_lists_what_exists(self):
+        with open(self.manifest, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(self.manifest, "w", encoding="utf-8") as handle:
+            handle.write(text.replace('"Sample_hapStatus"', '"Samples"'))
+
+        with self.assertRaisesRegex(BuildError, "contains: .*Sample_hapStatus.*hapPA"):
+            load_plan(self.repo, os.path.join(self.repo, ".cache"))
+
+    def test_hint_flags_case_only_differences(self):
+        hint = _missing_hint(os.path.join(self.hapsearch, "sample_hapstatus"), self.repo)
+
+        self.assertIn("Did you mean 'Sample_hapStatus'", hint)
+
+    def test_unquoted_comma_in_contacts_names_the_file_and_line(self):
+        mapping = os.path.join(self.hapsearch, "HapSearch_mapping.csv")
+        contacts = os.path.join(self.hapsearch, "HapSearch_owner_contacts.csv")
+        with open(mapping, "w", encoding="utf-8") as handle:
+            handle.write("genotyping_source,project_code,owner_name\nDAl21-6679,P01,Jane Doe\n")
+        with open(contacts, "w", encoding="utf-8") as handle:
+            handle.write("Full Name,Employer,Primary Location\n"
+                         'Jane Doe,USDA,"St. Paul, MN"\n'
+                         "John Roe,Cornell University,Ithaca, NY\n")
+        plan = BuildPlan(manifest_path=self.manifest, project_mapping=mapping,
+                         owner_contacts=contacts, species=[], max_skipped_allele_fraction=0.02)
+
+        with self.assertRaises(BuildError) as raised:
+            check_metadata(plan, self.repo)
+
+        message = str(raised.exception)
+        self.assertIn("owner contacts file alfalfa/data/hapSearch/HapSearch_owner_contacts.csv", message)
+        self.assertIn("line 3 has 4 fields but the header has 3", message)
+        self.assertNotIn("Cornell", message)  # no personal details in build logs
 
     def test_missing_repo_is_explained(self):
         with self.assertRaisesRegex(BuildError, "Data repository not found"):
@@ -187,6 +240,8 @@ class VersionPinTests(PatternManifestTests):
         return load_plan(self.repo, os.path.join(self.repo, ".cache"), version=version)
 
     # Inherited pattern tests use a different manifest.
+    test_case_only_mismatch_is_pointed_out = None
+    test_missing_folder_lists_what_exists = None
     test_newest_fasta_and_its_matrix_are_chosen = None
     test_newest_fasta_without_matrix_stops_the_build = None
     test_pinned_fasta_selects_matching_matrix = None

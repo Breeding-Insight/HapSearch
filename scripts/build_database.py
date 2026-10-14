@@ -134,6 +134,24 @@ def _local_path(data_repo: str, base_dir: str, spec: str) -> str:
     return os.path.normpath(os.path.join(base_dir, spec))
 
 
+def _missing_hint(path: str, data_repo: str) -> str:
+    """Explain a missing path: a case-only mismatch, or what the folder holds."""
+    parent, name = os.path.split(path)
+    while parent and not os.path.isdir(parent) and parent != data_repo:
+        parent, name = os.path.split(parent)
+    if not os.path.isdir(parent):
+        return ""
+    entries = sorted(os.listdir(parent))
+    case_matches = [entry for entry in entries if entry.lower() == name.lower()]
+    where = os.path.relpath(parent, data_repo)
+    where = "the repository root" if where == "." else f"{where}/"
+    if case_matches:
+        return (f". Did you mean '{case_matches[0]}'? Names are case-sensitive "
+                f"in Cloud Build")
+    shown = ", ".join(entries[:15]) + (", ..." if len(entries) > 15 else "")
+    return f". {where} contains: {shown or 'nothing'}"
+
+
 def _has_wildcard(spec: str) -> bool:
     return any(char in spec for char in "*?[")
 
@@ -198,7 +216,8 @@ def _resolve_source(spec, data_repo: str, base_dir: str, cache_dir: str,
         if _has_wildcard(spec):
             matches = _glob_files(path)
             if not matches:
-                raise BuildError(f"{label}: {spec} matches no files in the data repository")
+                raise BuildError(f"{label}: {spec} matches no files in the data repository"
+                                 f"{_missing_hint(os.path.dirname(path), data_repo)}")
             if len(matches) > 1 and not pick_newest:
                 names = ", ".join(os.path.relpath(match, data_repo) for match in matches)
                 raise BuildError(
@@ -207,7 +226,8 @@ def _resolve_source(spec, data_repo: str, base_dir: str, cache_dir: str,
                 )
             path = max(matches, key=_version_key)
         elif not os.path.isfile(path):
-            raise BuildError(f"{label}: {spec} does not exist in the data repository")
+            raise BuildError(f"{label}: {spec} does not exist in the data repository"
+                             f"{_missing_hint(path, data_repo)}")
         plan_sources[label] = os.path.relpath(path, data_repo)
         return path
     if isinstance(spec, dict) and {"repo", "ref", "path"} <= set(spec):
@@ -251,7 +271,8 @@ def _expand_presence(spec, data_repo: str, base_dir: str, label: str, fasta: str
         elif os.path.isfile(path):
             files.append(path)
         else:
-            raise BuildError(f"{label}: {item} does not exist in the data repository{hint}")
+            raise BuildError(f"{label}: {item} does not exist in the data repository{hint}"
+                             f"{_missing_hint(path, data_repo)}")
     if len(files) <= 3:
         plan_sources[label] = ", ".join(os.path.relpath(path, data_repo) for path in files)
     else:
@@ -384,6 +405,90 @@ def _run_import(script: str, args: List[str], db_path: str) -> None:
         raise BuildError(f"{script} failed (exit {result.returncode}); see the output above")
 
 
+def describe_matrix(path: str, lines: int = 12,
+                    expectation: str = "Every line should have the same number of "
+                                        "comma-separated fields, starting with an AlleleID "
+                                        "header.",
+                    preview: bool = True) -> str:
+    """Summarize a CSV file's shape to explain why it could not be read.
+
+    ``preview=False`` shows only field counts, for files with personal details.
+    """
+    opener = gzip.open if path.lower().endswith(".gz") else open
+    rows = []
+    try:
+        with opener(path, "rt", encoding="utf-8", errors="replace") as handle:
+            for number, line in enumerate(handle, 1):
+                if number > lines:
+                    break
+                rows.append(line.rstrip("\r\n"))
+    except OSError as exc:
+        return f"  (could not read {os.path.basename(path)}: {exc})"
+    size = os.path.getsize(path)
+    report = [f"  {os.path.basename(path)}: {size:,} bytes. First {len(rows)} lines "
+              "(fields when split on comma / tab / semicolon):"]
+    for number, line in enumerate(rows, 1):
+        counts = f"{line.count(',') + 1} / {line.count(chr(9)) + 1} / {line.count(';') + 1}"
+        text = (line[:80] + ("..." if len(line) > 80 else "")) if preview else ""
+        report.append(f"    {number:>3}: {counts:<16} {text}".rstrip())
+    report.append(f"  {expectation}")
+    return "\n".join(report)
+
+
+def _csv_problem(path: str) -> Optional[str]:
+    """First line whose comma-separated field count differs from the header's."""
+    import csv
+
+    with open(path, newline="", encoding="utf-8-sig", errors="replace") as handle:
+        rows = csv.reader(handle)
+        header = next(rows, None)
+        if not header:
+            return "the file is empty"
+        for number, row in enumerate(rows, 2):
+            if row and len(row) != len(header):
+                return (f"line {number} has {len(row)} fields but the header has "
+                        f"{len(header)}; quote values that contain commas, e.g. "
+                        '"Ithaca, NY"')
+    return None
+
+
+def check_metadata(plan: BuildPlan, data_repo: str) -> None:
+    """Read the mapping and contacts files up front, naming the file on failure.
+
+    The importers read these before each matrix, so without this check a bad
+    contacts row would be reported as a problem with the first sample file.
+    """
+    sys.path.insert(0, REPO_ROOT)
+    from scripts.presence_metadata import load_owner_contacts, load_project_mapping
+
+    for label, path, loader in (
+        ("project mapping", plan.project_mapping, load_project_mapping),
+        ("owner contacts", plan.owner_contacts, load_owner_contacts),
+    ):
+        name = os.path.relpath(path, data_repo)
+        problem = _csv_problem(path) if path.lower().endswith(".csv") else None
+        if problem is None:
+            try:
+                loader(path)
+            except Exception as exc:  # pandas and validation errors alike
+                problem = str(exc)
+        if problem:
+            raise BuildError(
+                f"{label} file {name}: {problem}\n"
+                + describe_matrix(path, lines=40, preview=False,
+                                  expectation="Every line should have the same number of "
+                                  "comma-separated fields as the header.")
+            )
+
+
+def _run_matrix_import(script: str, path: str, args: List[str], db_path: str) -> None:
+    try:
+        _run_import(script, [path, *args], db_path)
+    except BuildError:
+        _log(describe_matrix(path))
+        raise
+
+
 def run_imports(plan: BuildPlan, db_path: str) -> None:
     metadata_args = [
         "--project-mapping", plan.project_mapping,
@@ -403,16 +508,17 @@ def run_imports(plan: BuildPlan, db_path: str) -> None:
 
         for path in species.sample_presence:
             _log(f"\n=== {species.name}: sample presence {os.path.basename(path)} ===")
-            _run_import(
+            _run_matrix_import(
                 "import_sample_presence.py",
-                [path, "--species-name", species.name, "--quiet", *metadata_args],
+                path,
+                ["--species-name", species.name, "--quiet", *metadata_args],
                 db_path,
             )
 
         for path in species.project_presence:
             _log(f"\n=== {species.name}: project presence {os.path.basename(path)} ===")
-            _run_import(
-                "import_project_presence.py", [path, "--quiet", *metadata_args], db_path,
+            _run_matrix_import(
+                "import_project_presence.py", path, ["--quiet", *metadata_args], db_path,
             )
 
 
@@ -704,8 +810,9 @@ def _build(sources: List[DataSource], output: str, compare_to: Optional[str], ca
         for source in sources:
             if not source.path:
                 checkout_source(source, cache_dir)
-            builds.append((source, load_plan(source.path, cache_dir, source.manifest,
-                                             source.version)))
+            plan = load_plan(source.path, cache_dir, source.manifest, source.version)
+            check_metadata(plan, source.path)
+            builds.append((source, plan))
     except BuildError as exc:
         _log(f"Error: {exc}")
         return False

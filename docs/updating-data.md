@@ -24,7 +24,7 @@ data/hapSearch/
   HapSearch_mapping.csv          genotyping source (DAl...) -> project
   HapSearch_owner_contacts.csv   project owners' contact details
   <probe design>.botloci         bottom-strand markers (optional)
-  Sample_hapStatus/              one *_hapStatus.csv per genotyping order
+  sample_hapStatus/              one *_hapStatus.csv per genotyping order
   hapPA/                         *_hapPA_matrix.csv per FASTA version
 ```
 
@@ -48,8 +48,8 @@ is written once. Every update below is just adding or replacing files.
 
 | Update | What to do |
 |---|---|
-| New genotyping order | Add its `*_hapStatus.csv` to `Sample_hapStatus/`, add a row for its `DAl...` number to `HapSearch_mapping.csv`, and add the owner to `HapSearch_owner_contacts.csv` if they are new. |
-| Re-called genotyping order | Replace the file in `Sample_hapStatus/`. If the new file has a different name, delete the old one, or both are imported. |
+| New genotyping order | Add its `*_hapStatus.csv` to `sample_hapStatus/`, add a row for its `DAl...` number to `HapSearch_mapping.csv`, and add the owner to `HapSearch_owner_contacts.csv` if they are new. |
+| Re-called genotyping order | Replace the file in `sample_hapStatus/`. If the new file has a different name, delete the old one, or both are imported. |
 | New FASTA version | Commit the FASTA to `data/versions/` and its matrix as `hapPA/<fasta name>_hapPA_matrix.csv`. Nothing changes in HapSearch until you publish that version (below); the build stops if the version's matrix is missing. |
 | Mapping or contact changes | Edit `HapSearch_mapping.csv` or `HapSearch_owner_contacts.csv`; keep the file names. |
 | New probe design | Replace the `.botloci` file. Keep only one; with two, the build stops and asks which. |

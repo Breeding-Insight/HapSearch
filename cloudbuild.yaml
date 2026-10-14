@@ -35,6 +35,7 @@ steps:
     entrypoint: bash
     env:
       - HAPSEARCH_BUILD_CONNECTION=projects/${PROJECT_ID}/locations/${_REGION}/connections/${_GITHUB_CONNECTION}
+      - DEBIAN_FRONTEND=noninteractive
     args:
       - -c
       - |

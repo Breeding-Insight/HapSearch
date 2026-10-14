@@ -19,7 +19,7 @@
 #   HapSearch_mapping.csv
 #   HapSearch_owner_contacts.csv
 #   <probe design>.botloci
-#   Sample_hapStatus/   one *_hapStatus.csv per genotyping order
+#   sample_hapStatus/   one *_hapStatus.csv per genotyping order
 #   hapPA/              *_hapPA_matrix.csv per FASTA version
 
 [metadata]
