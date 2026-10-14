@@ -8,7 +8,7 @@ This page provides a comprehensive overview with:
 Goals 2 & 3 (marker and haplotype search) are available in dedicated explorer tabs.
 """
 
-from dash import Patch, dcc, html, Input, Output, State, ctx, no_update
+from dash import dcc, html, Input, Output, State, ctx, no_update
 import dash_bootstrap_components as dbc
 import math
 import re
@@ -180,6 +180,7 @@ layout = dbc.Container([
                             default_height=7.5,
                         ),
                     ], className="d-flex justify-content-between align-items-start gap-3 mb-2"),
+                    html.Div(id='overview-filter-status', className="overview-filter-status mb-2"),
                     _overview_loading(
                         dcc.Graph(
                             id='overview-sharing-chart',
@@ -188,7 +189,6 @@ layout = dbc.Container([
                         "overview-loading-region overview-sharing-loading-region",
                     ),
                     dcc.Store(id='overview-sharing-chart-state'),
-                    html.Div(id='overview-filter-status', className="overview-filter-status mt-2"),
                 ])
             ], className="h-100 w-100")
         ], width=12, className="mb-4 d-flex")
@@ -880,8 +880,7 @@ def _short_count(value):
 def _selection_shapes(ids, private, allele_filter_value):
     """Outline for the active filter: a pair's cell, or a program's private bar.
 
-    Orange over a white halo, so it shows on dark and light cells alike. Kept
-    separate so a filter change only patches these shapes, not the figure.
+    Orange over a white halo, so it shows on dark and light cells alike.
     """
     position = {group_id: index for index, group_id in enumerate(ids)}
     value = allele_filter_value or ""
@@ -1012,13 +1011,13 @@ def _sharing_headline(summary, allele_filter_value=None):
             className="btn btn-sm sharing-all-btn" + (" active" if active else ""),
             title="Filter to the alleles every selected program shares",
         ),
-        html.Div([
-            html.I(className="fas fa-hand-pointer me-2"),
-            "Or click a cell or a teal bar. The filter applies to the Microhaplotypes and "
+        html.Span(
+            "or click a cell or a teal bar to filter the Microhaplotypes and "
             "Multiple Sequence Alignment tabs.",
-        ], className="sharing-hint"),
+            className="sharing-hint",
+        ),
         empty_note,
-    ])
+    ], className="sharing-toolbar")
 
 
 @app.callback(
@@ -1086,48 +1085,33 @@ def update_accumulation_curve(species_id, n_clicks):
     Output('overview-sharing-chart-state', 'data'),
     Input('selected-species-store', 'data'),
     Input('global-programs-dropdown', 'value'),
-    State('global-allele-filter', 'value'),
+    Input('global-allele-filter', 'value'),
 )
 def update_sharing_chart(species_id, program_ids, allele_filter_value):
-    """Alleles shared between the selected programs.
+    """Alleles shared between the selected programs, with the active filter outlined.
 
-    The filter outline and the "shared by all" button state are updated by
-    their own callbacks, so changing the filter doesn't redraw the chart.
+    This is the only callback that writes the chart. Changing programs also
+    resets the allele filter, re-triggering it while the first run may still
+    be computing; Dash then keeps only the newer run, which carries both the
+    current programs and the current filter. A second callback patching the
+    same figure made Dash discard the slower full rebuild and leave the chart
+    on the previous programs.
     """
     if not species_id:
         return "", _message_figure("Please select a species", 300), {}
 
     try:
         summary = _sharing_summary(allele_filter.sharing_data(int(species_id), program_ids))
-        # Clicks report program names (label_ids maps them back to group ids);
-        # the outline callback needs each row's id and private count.
-        chart_state = {
-            "label_ids": dict(zip(summary["labels"], summary["ids"])),
-            "ids": summary["ids"],
-            "private": summary["private"],
-        }
-        figure = _build_sharing_figure(summary, allele_filter_value)
-        return _sharing_headline(summary, allele_filter_value), figure, chart_state
+        # Clicks report program names; label_ids maps them back to group ids.
+        chart_state = {"label_ids": dict(zip(summary["labels"], summary["ids"]))}
+        return (
+            _sharing_headline(summary, allele_filter_value),
+            _build_sharing_figure(summary, allele_filter_value),
+            chart_state,
+        )
 
     except Exception as e:
         return "", _message_figure(f"Error: {str(e)}", 300), {}
-
-
-@app.callback(
-    Output('overview-sharing-chart', 'figure', allow_duplicate=True),
-    Output('overview-filter-shared-all', 'className'),
-    Input('global-allele-filter', 'value'),
-    State('overview-sharing-chart-state', 'data'),
-    prevent_initial_call=True
-)
-def show_selected_filter(allele_filter_value, chart_state):
-    """Move the outline and set the "shared by all" button without redrawing."""
-    figure = Patch()
-    figure['layout']['shapes'] = _selection_shapes(
-        (chart_state or {}).get("ids") or [], (chart_state or {}).get("private") or [],
-        allele_filter_value)
-    button = "btn btn-sm sharing-all-btn" + (" active" if allele_filter_value == allele_filter.ALL else "")
-    return figure, button
 
 
 @app.callback(
@@ -1179,26 +1163,26 @@ def show_filter_status(species_id, program_ids, allele_filter_value, options):
     except Exception as e:
         return dbc.Alert(f"Error: {str(e)}", color="danger")
     if kept is None:
-        return html.Div(
-            "No allele filter: every allele is included. Click a cell or a teal bar to filter "
-            "the Microhaplotypes and Multiple Sequence Alignment tabs.",
-            className="small",
-        )
+        # No restriction: every allele in the selected programs.
+        count = len(allele_filter.sharing_data(int(species_id), program_ids)
+                    .get("microhaplotype_groups") or {})
+        return html.Div([
+            html.Span("Selected alleles:", className="selected-alleles-label"),
+            html.Span([html.Strong("All alleles in the selected programs"), f" ({count:,})"]),
+        ], className="selected-alleles")
     label = next((option['label'] for option in options or []
                   if option['value'] == allele_filter_value), "Selected programs")
     return html.Div([
-        html.Div([
-            html.I(className="fas fa-filter me-2", style={'color': APP_TEAL}),
-            html.Strong(label), f": {len(kept):,} alleles. ",
-            html.Button("Clear", id='overview-clear-filter', className="btn btn-link btn-sm p-0 align-baseline"),
-        ]),
-        html.Div([
+        html.Span("Selected alleles:", className="selected-alleles-label"),
+        html.Span([html.Strong(label), f" ({len(kept):,})"]),
+        html.Button("Clear", id='overview-clear-filter', className="btn btn-link btn-sm p-0"),
+        html.Span([
             html.Button([html.I(className="fas fa-magnifying-glass me-2"), "View in Microhaplotypes"],
-                        id='overview-open-haplotypes', className="btn btn-primary btn-sm me-2"),
+                        id='overview-open-haplotypes', className="btn btn-primary btn-sm"),
             html.Button([html.I(className="fas fa-align-left me-2"), "View loci in Multiple Sequence Alignment"],
                         id='overview-open-alignment', className="btn btn-outline-secondary btn-sm haplo-action-btn"),
-        ], className="mt-2"),
-    ])
+        ], className="selected-alleles-actions"),
+    ], className="selected-alleles")
 
 
 @app.callback(
