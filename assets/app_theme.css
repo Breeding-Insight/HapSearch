@@ -331,9 +331,28 @@ body {
 }
 
 
-.overview-filter-status {
-  border-top: 1px solid var(--app-border);
-  padding-top: 0.75rem;
+/* "Selected alleles" line above the sharing chart. */
+.selected-alleles {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--app-surface-alt);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.selected-alleles-label {
+  font-weight: 600;
+  color: var(--app-ink-muted);
+}
+
+.selected-alleles-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
 }
 
 /* Alignment tab: allele names (row labels) open the allele in Microhaplotypes
@@ -381,8 +400,14 @@ body {
   color: #ffffff;
 }
 
+.sharing-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
 .sharing-hint {
-  margin-top: 0.5rem;
   font-size: 0.9rem;
   color: var(--app-ink);
 }

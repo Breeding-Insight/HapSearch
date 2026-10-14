@@ -180,6 +180,7 @@ layout = dbc.Container([
                             default_height=7.5,
                         ),
                     ], className="d-flex justify-content-between align-items-start gap-3 mb-2"),
+                    html.Div(id='overview-filter-status', className="overview-filter-status mb-2"),
                     _overview_loading(
                         dcc.Graph(
                             id='overview-sharing-chart',
@@ -188,7 +189,6 @@ layout = dbc.Container([
                         "overview-loading-region overview-sharing-loading-region",
                     ),
                     dcc.Store(id='overview-sharing-chart-state'),
-                    html.Div(id='overview-filter-status', className="overview-filter-status mt-2"),
                 ])
             ], className="h-100 w-100")
         ], width=12, className="mb-4 d-flex")
@@ -1011,13 +1011,13 @@ def _sharing_headline(summary, allele_filter_value=None):
             className="btn btn-sm sharing-all-btn" + (" active" if active else ""),
             title="Filter to the alleles every selected program shares",
         ),
-        html.Div([
-            html.I(className="fas fa-hand-pointer me-2"),
-            "Or click a cell or a teal bar. The filter applies to the Microhaplotypes and "
+        html.Span(
+            "or click a cell or a teal bar to filter the Microhaplotypes and "
             "Multiple Sequence Alignment tabs.",
-        ], className="sharing-hint"),
+            className="sharing-hint",
+        ),
         empty_note,
-    ])
+    ], className="sharing-toolbar")
 
 
 @app.callback(
@@ -1163,26 +1163,26 @@ def show_filter_status(species_id, program_ids, allele_filter_value, options):
     except Exception as e:
         return dbc.Alert(f"Error: {str(e)}", color="danger")
     if kept is None:
-        return html.Div(
-            "No allele filter: every allele is included. Click a cell or a teal bar to filter "
-            "the Microhaplotypes and Multiple Sequence Alignment tabs.",
-            className="small",
-        )
+        # No restriction: every allele in the selected programs.
+        count = len(allele_filter.sharing_data(int(species_id), program_ids)
+                    .get("microhaplotype_groups") or {})
+        return html.Div([
+            html.Span("Selected alleles:", className="selected-alleles-label"),
+            html.Span([html.Strong("All alleles in the selected programs"), f" ({count:,})"]),
+        ], className="selected-alleles")
     label = next((option['label'] for option in options or []
                   if option['value'] == allele_filter_value), "Selected programs")
     return html.Div([
-        html.Div([
-            html.I(className="fas fa-filter me-2", style={'color': APP_TEAL}),
-            html.Strong(label), f": {len(kept):,} alleles. ",
-            html.Button("Clear", id='overview-clear-filter', className="btn btn-link btn-sm p-0 align-baseline"),
-        ]),
-        html.Div([
+        html.Span("Selected alleles:", className="selected-alleles-label"),
+        html.Span([html.Strong(label), f" ({len(kept):,})"]),
+        html.Button("Clear", id='overview-clear-filter', className="btn btn-link btn-sm p-0"),
+        html.Span([
             html.Button([html.I(className="fas fa-magnifying-glass me-2"), "View in Microhaplotypes"],
-                        id='overview-open-haplotypes', className="btn btn-primary btn-sm me-2"),
+                        id='overview-open-haplotypes', className="btn btn-primary btn-sm"),
             html.Button([html.I(className="fas fa-align-left me-2"), "View loci in Multiple Sequence Alignment"],
                         id='overview-open-alignment', className="btn btn-outline-secondary btn-sm haplo-action-btn"),
-        ], className="mt-2"),
-    ])
+        ], className="selected-alleles-actions"),
+    ], className="selected-alleles")
 
 
 @app.callback(
