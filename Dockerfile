@@ -2,13 +2,12 @@ FROM python:3.13-slim AS base
 
 WORKDIR /app
 
-# Install system dependencies, build tools, and alignment tools
+# Install system dependencies (wget fetches MUSCLE below). Every Python
+# requirement ships prebuilt wheels, so no compiler is needed.
 # Use DEBIAN_FRONTEND=noninteractive and add timeout settings
 RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     apt-get install -y --no-install-recommends \
     wget \
-    build-essential \
-    g++ \
     ca-certificates \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*

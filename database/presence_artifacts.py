@@ -37,23 +37,82 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _pack_entity_rows(
+def _positions(ids: Sequence[int], axis: np.ndarray) -> np.ndarray:
+    """Position of each id on an axis of unique ids, or -1 when it isn't there."""
+    ids = np.asarray(ids, dtype=np.int64)
+    if not len(axis):
+        return np.full(len(ids), -1, dtype=np.int64)
+    order = np.argsort(axis, kind="stable")
+    sorted_axis = axis[order]
+    found = np.searchsorted(sorted_axis, ids).clip(0, len(axis) - 1)
+    return np.where(sorted_axis[found] == ids, order[found], -1)
+
+
+def entity_presence_matrix(
+    file_presence: np.ndarray,
+    row_microhaplotype_ids: Sequence[int],
+    column_entity_ids: Sequence[int],
+    microhaplotype_ids: Sequence[int],
+    entity_ids: Sequence[int],
+) -> np.ndarray:
+    """Turn an imported matrix into the artifact's entity x microhaplotype matrix.
+
+    file_presence is the file's boolean matrix (one row per allele line, one
+    column per sample or project). Rows and columns are placed on the
+    artifact's axes by id; ids not on an axis (e.g. unknown alleles, -1) are
+    dropped, and repeated rows or columns are OR-ed together. This is the
+    vectorized equivalent of building (microhaplotype, entity) pairs.
+    """
+    mh_axis = np.asarray(list(microhaplotype_ids), dtype=np.int64)
+    entity_axis = np.asarray(list(entity_ids), dtype=np.int64)
+    matrix = np.zeros((len(entity_axis), len(mh_axis)), dtype=np.bool_)
+
+    row_pos = _positions(row_microhaplotype_ids, mh_axis)
+    col_pos = _positions(column_entity_ids, entity_axis)
+    rows = np.flatnonzero(row_pos >= 0)
+    cols = np.flatnonzero(col_pos >= 0)
+    if not len(rows) or not len(cols):
+        return matrix
+
+    block = np.asarray(file_presence, dtype=np.bool_)[np.ix_(rows, cols)].T
+    target_rows, target_cols = col_pos[cols], row_pos[rows]
+    if len(np.unique(target_rows)) == len(target_rows) and len(np.unique(target_cols)) == len(target_cols):
+        matrix[np.ix_(target_rows, target_cols)] = block
+    else:
+        np.logical_or.at(matrix, (target_rows[:, None], target_cols[None, :]), block)
+    return matrix
+
+
+def _pairs_matrix(
     pairs: Sequence[Tuple[int, int]],
     microhaplotype_ids: Sequence[int],
     entity_ids: Sequence[int],
+) -> np.ndarray:
+    """Entity x microhaplotype matrix from (microhaplotype, entity) pairs."""
+    pairs = np.asarray(list(pairs), dtype=np.int64).reshape(-1, 2)
+    mh_axis = np.asarray(list(microhaplotype_ids), dtype=np.int64)
+    entity_axis = np.asarray(list(entity_ids), dtype=np.int64)
+    matrix = np.zeros((len(entity_axis), len(mh_axis)), dtype=np.bool_)
+    rows = _positions(pairs[:, 1], entity_axis)
+    cols = _positions(pairs[:, 0], mh_axis)
+    keep = (rows >= 0) & (cols >= 0)
+    matrix[rows[keep], cols[keep]] = True
+    return matrix
+
+
+def _pack_entity_rows(
+    pairs: Optional[Sequence[Tuple[int, int]]],
+    microhaplotype_ids: Sequence[int],
+    entity_ids: Sequence[int],
+    matrix: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Pack presence pairs into one bit row per entity."""
+    """Pack presence (pairs, or an entity x microhaplotype matrix) into one bit row per entity."""
     entity_array = np.array(list(entity_ids), dtype=np.int64)
     mh_array = np.array(list(microhaplotype_ids), dtype=np.int64)
-    matrix = np.zeros((len(entity_array), len(mh_array)), dtype=np.bool_)
-
-    entity_pos = {int(eid): i for i, eid in enumerate(entity_array.tolist())}
-    mh_pos = {int(mid): i for i, mid in enumerate(mh_array.tolist())}
-    for raw_mh_id, raw_entity_id in pairs:
-        row = entity_pos.get(int(raw_entity_id))
-        col = mh_pos.get(int(raw_mh_id))
-        if row is not None and col is not None:
-            matrix[row, col] = True
+    if matrix is None:
+        matrix = _pairs_matrix(pairs, mh_array, entity_array)
+    elif matrix.shape != (len(entity_array), len(mh_array)):
+        raise ValueError("presence matrix must be entities x microhaplotypes")
 
     packed = np.packbits(matrix, axis=1, bitorder="little")
     present_counts = matrix.sum(axis=1).astype(np.int64)
@@ -62,7 +121,7 @@ def _pack_entity_rows(
 
 def write_presence_artifact(
     cursor,
-    pairs: Sequence[Tuple[int, int]],
+    pairs: Optional[Sequence[Tuple[int, int]]],
     microhaplotype_ids: Sequence[int],
     entity_ids: Sequence[int],
     *,
@@ -70,8 +129,14 @@ def write_presence_artifact(
     source_path: str,
     species_id: Optional[int] = None,
     project_id: Optional[int] = None,
+    matrix: Optional[np.ndarray] = None,
 ) -> Dict[str, object]:
-    """Store a presence matrix as packed bitmap rows and return its metadata."""
+    """Store a presence matrix as packed bitmap rows and return its metadata.
+
+    Presence is given either as (microhaplotype, entity) pairs or, much faster
+    for large imports, as an entity x microhaplotype boolean matrix (see
+    entity_presence_matrix); pass pairs=None with a matrix.
+    """
     if entity_type not in ENTITY_TYPES:
         raise ValueError("entity_type must be 'sample' or 'project'")
 
@@ -79,6 +144,7 @@ def write_presence_artifact(
         pairs,
         microhaplotype_ids,
         entity_ids,
+        matrix,
     )
     artifact_size_bytes = int(packed.nbytes + mh_array.nbytes)
     metadata = {
@@ -368,32 +434,20 @@ def upsert_presence_summary(
     )
 
     if entity_type == "sample":
+        # The species' sample count is the same for every row, so count once
+        # rather than in a subquery per row (which grew with every import).
+        cursor.execute("SELECT COUNT(*) FROM samples WHERE species_id = ?", (int(species_id),))
+        species_samples = int(cursor.fetchone()[0])
         cursor.execute(
             """
             UPDATE microhaplotype_presence_summary
             SET
-                total_count = (
-                    SELECT COUNT(*)
-                    FROM samples
-                    WHERE samples.species_id = microhaplotype_presence_summary.species_id
-                ),
-                frequency = CASE
-                    WHEN (
-                        SELECT COUNT(*)
-                        FROM samples
-                        WHERE samples.species_id = microhaplotype_presence_summary.species_id
-                    ) > 0
-                    THEN CAST(present_count AS REAL) / (
-                        SELECT COUNT(*)
-                        FROM samples
-                        WHERE samples.species_id = microhaplotype_presence_summary.species_id
-                    )
-                    ELSE 0.0
-                END,
+                total_count = ?,
+                frequency = CASE WHEN ? > 0 THEN CAST(present_count AS REAL) / ? ELSE 0.0 END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE species_id = ? AND entity_type = 'sample'
             """,
-            (int(species_id),),
+            (species_samples, species_samples, species_samples, int(species_id)),
         )
         cursor.executemany(
             """
@@ -424,6 +478,12 @@ def upsert_presence_summary(
                 for mid in counts_by_microhaplotype.keys()
             ],
         )
+
+
+def counts_from_matrix(matrix: np.ndarray, microhaplotype_ids: Sequence[int]) -> Dict[int, int]:
+    """Present entities per microhaplotype from an entity x microhaplotype matrix."""
+    counts = np.asarray(matrix, dtype=np.bool_).sum(axis=0)
+    return {int(mid): int(count) for mid, count in zip(microhaplotype_ids, counts)}
 
 
 def counts_by_microhaplotype(
