@@ -101,7 +101,7 @@ def favicon():
     """Serve favicon with cache-busting-friendly source."""
     return send_from_directory(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
-        'HaploSearch_favicon_2.png',
+        'brand/hapsearch-icon.png',
         mimetype='image/png',
         max_age=0,
     )
@@ -149,8 +149,6 @@ def serve_layout():
             overview.layout,
             label="Overview",
             tab_id="overview-tab",
-            label_style={"color": "#000000"},
-            active_label_style={"color": "#245842", "fontWeight": "700"},
             tab_style={"marginRight": "5px"}
         ),
         dbc.Tab(
@@ -158,15 +156,11 @@ def serve_layout():
             label="Microhaplotypes",
             tab_id="haplotype-tab",
             tab_class_name="microhaplotypes-tab",
-            label_style={"color": "#000000"},
-            active_label_style={"color": "#245842", "fontWeight": "700"}
         ),
         dbc.Tab(
             marker_explorer.layout,
             label="Multiple Sequence Alignment",
             tab_id="marker-tab",
-            label_style={"color": "#000000"},
-            active_label_style={"color": "#245842", "fontWeight": "700"},
             tab_style={"marginRight": "5px"}
         ),
     ]
@@ -175,8 +169,8 @@ def serve_layout():
     header_right_elts = [
         html.I(className="fas fa-user me-1"),
         user_display,
-        " | ",
-        html.A("Logout", href="/auth/logout", className="text-muted")
+        html.Span("|", className="app-header-sep", **{"aria-hidden": "true"}),
+        html.A("Log out", href="/auth/logout")
     ]
 
     layout_children = [
@@ -184,30 +178,28 @@ def serve_layout():
         dcc.Store(id='navigate-to-haplotype-store', data=None),
         dcc.Store(id='navigate-to-marker-store', data=None),
         dcc.Store(id='app-initialized-store', data=False),
-        html.Div([
+        # Header and footer follow the landing page (landing/index.html).
+        html.Header([
             html.Div([
-                html.Div([
-                    html.Div([
-                        html.Img(
-                            src="/static/Haplosearch%20logo_favicon.png",
-                            alt="HapSearch",
-                        )
-                    ], className="app-hero-icon"),
-                    html.H1([
-                        html.Span("Hap", className="hero-bold"),
-                        "Search"
-                    ], className="app-hero-title mb-0")
-                ], className="app-hero-left"),
-                html.Div([
-                    html.Div(id='db-status-header', className="text-end"),
-                    html.Div(header_right_elts, className="app-hero-user-line")
-                ], className="app-hero-right")
-            ], className="app-hero-top-row"),
-            html.P(
-                "Browse, search, and analyze microhaplotype data across species and projects.",
-                className="app-hero-subtitle"
-            )
-        ], className="app-hero-section"),
+                html.A(
+                    html.Img(src="/static/brand/breeding-insight-logo.png", alt="Breeding Insight",
+                             className="app-bi-logo"),
+                    href="https://breedinginsight.org/",
+                ),
+                html.Span(className="app-brand-divider", **{"aria-hidden": "true"}),
+                html.A([
+                    html.Img(src="/static/brand/hapsearch-logo.png", alt=""),
+                    html.Span([
+                        html.Span("Hap", className="wm-hap"),
+                        html.Span("Search", className="wm-search"),
+                    ], className="app-name"),
+                ], href="/app/", className="app-brand"),
+            ], className="app-header-left"),
+            html.Div([
+                html.Div(id='db-status-header', className="app-header-stats"),
+                html.Div(header_right_elts, className="app-header-user"),
+            ], className="app-header-right"),
+        ], className="app-header"),
 
         dbc.Row([
             dbc.Col([
@@ -229,35 +221,29 @@ def serve_layout():
         dbc.Tabs(tabs, id="main-tabs", active_tab="overview-tab", className="mb-4"),
 
         html.Footer([
+            html.Ul([
+                html.Li(html.Img(src="/static/brand/breeding-insight-logo-white.png",
+                                 alt="Breeding Insight"), className="logo-bi"),
+                html.Li(html.Img(src="/static/brand/usda-ars-logo-white.png",
+                                 alt="USDA Agricultural Research Service")),
+                html.Li(html.A(html.Img(src="/static/brand/uf-ifas-logo.svg",
+                                        alt="University of Florida Institute of Food and Agricultural Sciences (UF/IFAS)"),
+                               href="https://ifas.ufl.edu/"), className="logo-ifas"),
+                html.Li(html.Img(src="/static/brand/cornell-logo-white.png", alt="Cornell University")),
+            ], className="app-partner-logos", **{"aria-label": "Partner organizations"}),
+            html.P(
+                "Breeding Insight is funded by the U.S. Department of Agriculture (USDA) Agricultural "
+                "Research Service (ARS) through University of Florida/IFAS. Formerly at Cornell University.",
+                className="app-funding",
+            ),
             html.Div([
-                html.Div([
-                    html.Img(
-                        src="/static/USDAARSIdentityColor_clearBKG.png",
-                        alt="USDA ARS Logo",
-                        style={"height": "50px", "width": "auto", "maxWidth": "150px"}
-                    ),
-                    html.Img(
-                        src="/static/IFAS-RGB.png",
-                        alt="UF/IFAS Logo",
-                        style={"height": "50px", "width": "auto", "maxWidth": "200px"}
-                    ),
-                    html.Img(
-                        src="/static/BreedingInsightLogo-RGB-1600px.png",
-                        alt="Breeding Insight Logo",
-                        style={"height": "50px", "width": "auto", "maxWidth": "200px"}
-                    ),
-                    html.Img(
-                        src="/static/cornell_seal_simple_web_b31b1b.png",
-                        alt="Cornell University Seal",
-                        style={"height": "50px", "width": "auto", "maxWidth": "80px"}
-                    ),
-                ], className="app-footer-logos"),
-                html.Div([
-                    html.Small("Funded by USDA-ARS and housed at University of Florida (UF/IFAS)."),
-                    html.Br(),
-                    html.Small("© 2026 Breeding Insight", style={"marginTop": "0.5rem", "display": "block"}),
-                ], className="app-footer-text"),
-            ], className="container")
+                html.P("© 2026 Breeding Insight"),
+                html.Ul([
+                    html.Li(html.A("About Breeding Insight", href="https://breedinginsight.org/about-bi/")),
+                    html.Li(html.A("Contact us", href="https://breedinginsight.org/contact-us/")),
+                    html.Li(html.A("Source code", href="https://github.com/Breeding-Insight/HapSearch")),
+                ]),
+            ], className="app-footer-bottom"),
         ], className="app-footer"),
     ]
 

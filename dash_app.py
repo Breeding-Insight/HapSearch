@@ -19,14 +19,14 @@ app = dash.Dash(
     title=config.APP_TITLE
 )
 
-# Ensure Dash /app uses the same favicon as the landing page.
+# Use the same favicon as the landing page (landing/assets/hapsearch-icon.png).
 # Keep a single favicon source to avoid browser precedence/caching conflicts.
 app.index_string = """<!DOCTYPE html>
 <html>
     <head>
         {%metas%}
         <title>{%title%}</title>
-        <link rel="icon" type="image/png" href="/static/HaploSearch_favicon_2.png">
+        <link rel="icon" type="image/png" href="/static/brand/hapsearch-icon.png">
         {%css%}
     </head>
     <body>

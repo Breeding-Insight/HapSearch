@@ -1,18 +1,53 @@
 :root {
+  /* Shared with the landing page (landing/index.html) and the other
+     Breeding Insight apps. */
+  --app-ink: #1b2733;
+  --app-ink-muted: #4a5663;
+  --app-surface: #ffffff;
+  --app-surface-alt: #f4f8f8;
+  --app-surface-tint: #e6f2f2;
+  --app-border: #d3e0e1;
+  --app-teal: #066a73;
+  --app-teal-strong: #054f56;
+  --app-footer-bg: #0c3237;
+  --app-footer-muted: #c9dcdd;
+  --app-radius: 10px;
+  --app-shadow: 0 1px 2px rgba(12, 50, 55, 0.06), 0 6px 20px rgba(12, 50, 55, 0.06);
+  --app-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
   --app-navy: #304c89;
   --app-blue: #648de5;
-  --app-card-header-bg: #d8ead8;
+  --app-card-header-bg: var(--app-surface-alt);
 
-  --app-primary-1: #245842;
-  --app-primary-2: #245842;
-  --app-primary-3: #245842;
-  --app-primary-4: #245842;
-  --app-primary-5: #245842;
+  --app-primary-1: var(--app-teal);
+  --app-primary-2: var(--app-teal);
+  --app-primary-3: var(--app-teal);
+  --app-primary-4: var(--app-teal-strong);
+  --app-primary-5: var(--app-teal);
 
   --app-on-primary-light: #ffffff;
   --app-on-primary-dark: #ffffff;
 
-  --app-focus-ring: rgba(36, 88, 66, 0.35);
+  --app-focus-ring: rgba(6, 106, 115, 0.35);
+
+  --bs-body-font-family: var(--app-font);
+  --bs-body-color: var(--app-ink);
+  --bs-link-color: var(--app-teal);
+  --bs-link-color-rgb: 6, 106, 115;
+  --bs-link-hover-color: var(--app-teal-strong);
+  --bs-link-hover-color-rgb: 5, 79, 86;
+  --bs-border-color: var(--app-border);
+}
+
+body {
+  font-family: var(--app-font);
+  color: var(--app-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn {
+  border-radius: 8px;
+  font-weight: 600;
 }
 
 /* Primary actions */
@@ -200,10 +235,66 @@
   color: var(--app-primary-4) !important;
 }
 
+/* Cards follow the landing page's cards. */
+.card {
+  border-color: var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow);
+}
+
 /* Card title/header bars (e.g., Overview charts) */
 .card > .card-header,
 .card-header {
   background-color: var(--app-card-header-bg) !important;
+  border-bottom-color: var(--app-border);
+  color: var(--app-ink);
+  font-weight: 600;
+}
+
+.card > .card-header:first-child {
+  border-radius: calc(var(--app-radius) - 1px) calc(var(--app-radius) - 1px) 0 0;
+}
+
+/* Cards nested in cards (e.g., the density charts) stay flat. */
+.card .card {
+  box-shadow: none;
+}
+
+/* Main tabs: teal text and underline for the active tab. */
+#main-tabs {
+  border-bottom: 1px solid var(--app-border);
+}
+
+#main-tabs .nav-link {
+  color: var(--app-ink-muted);
+  font-weight: 600;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  padding: 0.6rem 0.9rem;
+}
+
+#main-tabs .nav-link:hover {
+  color: var(--app-teal-strong);
+  border-bottom-color: var(--app-border);
+}
+
+#main-tabs .nav-link.active {
+  color: var(--app-teal) !important;
+  background: transparent;
+  border-bottom-color: var(--app-teal);
+}
+
+.form-check-input:checked {
+  background-color: var(--app-teal);
+  border-color: var(--app-teal);
+}
+
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus {
+  border-color: var(--app-teal);
+  box-shadow: 0 0 0 0.2rem var(--app-focus-ring);
 }
 
 /* Overview loading regions reserve callback space so cards do not jump. */

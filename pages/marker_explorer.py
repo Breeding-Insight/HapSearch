@@ -344,7 +344,7 @@ def show_marker_details(n_clicks, navigate_data, current_marker_id):
             ], className="msa-results-loading-region"),
             id='marker-msa-results-loading',
             type='circle',
-            color='#319B42',
+            color='#066a73',
         )
         ])
     return placeholder_view, None, no_update

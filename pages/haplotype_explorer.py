@@ -349,7 +349,7 @@ layout = dbc.Container([
                             ], className="haplotype-results-loading-region"),
                             id='haplotype-results-loading',
                             type='circle',
-                            color='#319B42',
+                            color='#066a73',
                         )
                     ])
                 ], id='haplotype-results-card')
