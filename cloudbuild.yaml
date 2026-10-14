@@ -41,8 +41,8 @@ steps:
       - -c
       - |
         set -euo pipefail
-        # git fetches the data sources; g++ builds parmed (a dash-bio dependency).
-        apt-get update -qq && apt-get install -y -qq --no-install-recommends git g++ > /dev/null
+        # git fetches the data sources.
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends git > /dev/null
         pip install --quiet --root-user-action=ignore -r requirements.txt
         python -W ignore scripts/build_database.py \
           --sources data_sources.toml \
