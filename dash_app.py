@@ -16,17 +16,19 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.icons.FONT_AWESOME],
     assets_folder=_ASSETS_FOLDER,
     suppress_callback_exceptions=True,
-    title=config.APP_TITLE
+    title=config.APP_TITLE,
+    # Keep the browser tab title steady instead of "Updating..." on every callback.
+    update_title=None,
 )
 
-# Ensure Dash /app uses the same favicon as the landing page.
+# Use the same favicon as the landing page (landing/assets/hapsearch-icon.png).
 # Keep a single favicon source to avoid browser precedence/caching conflicts.
 app.index_string = """<!DOCTYPE html>
 <html>
     <head>
         {%metas%}
         <title>{%title%}</title>
-        <link rel="icon" type="image/png" href="/static/HaploSearch_favicon_2.png">
+        <link rel="icon" type="image/png" href="/static/brand/hapsearch-icon.png">
         {%css%}
     </head>
     <body>

@@ -3,7 +3,7 @@
 from collections import Counter, defaultdict
 import random
 import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Collection, Dict, List, Optional, Tuple
 import numpy as np
 from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
@@ -582,10 +582,29 @@ def get_position_range_for_chromosome(db: DatabaseManager, species_id: int,
 
 # Additional helper functions for Haplosearch
 
+def _marker_ids_for_microhaplotypes(db: DatabaseManager, microhaplotype_ids: Collection[int]) -> set:
+    """Database ids of the markers (loci) the given microhaplotypes belong to."""
+    marker_ids = set()
+    for chunk in _chunks(sorted(int(m) for m in microhaplotype_ids), _SAFE_SQL_PARAM_LIMIT):
+        placeholders = ",".join(["?"] * len(chunk))
+        marker_ids.update(
+            row['marker_id'] for row in db.execute_query(
+                f"SELECT DISTINCT marker_id FROM microhaplotypes WHERE id IN ({placeholders})",
+                tuple(chunk),
+            )
+        )
+    return marker_ids
+
+
 def get_markers_paginated(db: DatabaseManager, species_id: int = None,
                          chromosome_id: int = None, search_marker_id: str = None,
-                         search_sequence: str = None, page: int = 1, per_page: int = 25) -> Dict[str, Any]:
-    """Get paginated markers with filtering"""
+                         search_sequence: str = None, page: int = 1, per_page: int = 25,
+                         microhaplotype_ids: Optional[Collection[int]] = None) -> Dict[str, Any]:
+    """Get paginated markers with filtering.
+
+    microhaplotype_ids, when given, keeps only loci with at least one of those
+    microhaplotypes (the app's program/allele filter); None means no restriction.
+    """
     query = """
         SELECT
             mk.id,
@@ -629,6 +648,22 @@ def get_markers_paginated(db: DatabaseManager, species_id: int = None,
         "ORDER BY mk.marker_id"
     )
 
+    if microhaplotype_ids is not None:
+        # Loci per species number in the thousands, so filter them in Python
+        # rather than passing every allowed id to SQLite.
+        allowed_marker_ids = _marker_ids_for_microhaplotypes(db, microhaplotype_ids)
+        markers = [row for row in db.execute_query(query, tuple(params))
+                   if row['id'] in allowed_marker_ids]
+        total = len(markers)
+        offset = (page - 1) * per_page
+        return {
+            'markers': markers[offset:offset + per_page],
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total + per_page - 1) // per_page if per_page > 0 else 0
+        }
+
     # Get total count
     query_no_order = query.rsplit(" ORDER BY ", 1)[0]
     count_query = f"SELECT COUNT(*) as total FROM ({query_no_order}) as subquery"
@@ -662,9 +697,14 @@ def get_microhaplotypes_paginated(
     max_frequency: float = None,
     exclude_missing_samples: bool = False,
     page: int = 1,
-    per_page: int = 25
+    per_page: int = 25,
+    microhaplotype_ids: Optional[Collection[int]] = None,
 ) -> Dict[str, Any]:
-    """Get paginated microhaplotypes with filtering"""
+    """Get paginated microhaplotypes with filtering.
+
+    microhaplotype_ids, when given, keeps only those microhaplotypes (the
+    app's program/allele filter); None means no restriction.
+    """
     # Explorer filtering relies on the stored microhaplotypes.frequency, which is updated
     # (species-based) by database.db_manager.update_haplotype_frequencies().
     query = """
@@ -712,6 +752,9 @@ def get_microhaplotypes_paginated(
         query += " AND mk.marker_id LIKE ?"
         params.append(f"%{marker_id}%")
 
+    allowed_ids = None
+    if microhaplotype_ids is not None:
+        allowed_ids = sorted(int(m) for m in microhaplotype_ids)
     if sample_filter:
         # Filter haplotypes by sample code/name (supports substring match).
         artifact_microhaplotype_ids = _get_microhaplotype_ids_for_sample_filter_artifacts(
@@ -719,6 +762,10 @@ def get_microhaplotypes_paginated(
             sample_filter,
             species_id,
         )
+        if allowed_ids is not None:
+            allowed_set = set(allowed_ids)
+            artifact_microhaplotype_ids = [m for m in artifact_microhaplotype_ids if m in allowed_set]
+            allowed_ids = None  # applied through the sample filter's ids
         if artifact_microhaplotype_ids:
             remaining_param_capacity = _SAFE_SQL_PARAM_LIMIT - len(params)
             if len(artifact_microhaplotype_ids) <= remaining_param_capacity:
@@ -729,6 +776,14 @@ def get_microhaplotypes_paginated(
                 chunked_sample_microhaplotype_ids = artifact_microhaplotype_ids
         else:
             query += " AND 1 = 0"
+    elif allowed_ids is not None:
+        if not allowed_ids:
+            query += " AND 1 = 0"
+        elif len(allowed_ids) <= _SAFE_SQL_PARAM_LIMIT - len(params):
+            query += f" AND m.id IN ({','.join(['?'] * len(allowed_ids))})"
+            params.extend(allowed_ids)
+        else:
+            chunked_sample_microhaplotype_ids = allowed_ids
 
     if min_frequency is not None:
         query += " AND m.frequency >= ?"
@@ -1554,11 +1609,14 @@ def get_microhaplotype_project_sharing_data(
     species_id: int,
     max_intersections: int = 24,
     selected_group_ids: Optional[List[str]] = None,
+    include_membership: bool = False,
 ) -> Dict[str, Any]:
     """Summarize microhaplotype sharing intersections across selected groups.
 
     Returns UpSet-style intersection counts derived from project lookup artifacts.
     Groups include Remaining Locations, Validation, and institution/location programs.
+    With include_membership, also returns "microhaplotype_groups": each
+    microhaplotype id mapped to the tuple of selected groups it is found in.
     """
     if not species_id:
         return {
@@ -1795,8 +1853,8 @@ def get_microhaplotype_project_sharing_data(
             group_ids.append(remaining_group_id)
         return sorted(set(group_ids), key=lambda group_id: group_order.get(group_id, 999999))
 
-    pattern_counts = Counter(
-        tuple(
+    microhaplotype_groups = {
+        microhaplotype_id: tuple(
             sorted(
                 {
                     group_id
@@ -1807,9 +1865,10 @@ def get_microhaplotype_project_sharing_data(
                 key=lambda group_id: group_order.get(group_id, 999999),
             )
         )
-        for project_ids in microhaplotype_projects.values()
+        for microhaplotype_id, project_ids in microhaplotype_projects.items()
         if project_ids
-    )
+    }
+    pattern_counts = Counter(microhaplotype_groups.values())
     pattern_counts.pop((), None)
     intersections = []
     for group in owner_groups:
@@ -1868,13 +1927,20 @@ def get_microhaplotype_project_sharing_data(
             )
         intersections = selected_rows
 
-    return {
+    result = {
         "owner_groups": owner_groups,
         "available_owner_groups": group_catalog,
         "default_group_ids": default_group_ids,
         "projects": owner_groups,
         "intersections": intersections,
     }
+    if include_membership:
+        result["microhaplotype_groups"] = {
+            microhaplotype_id: groups
+            for microhaplotype_id, groups in microhaplotype_groups.items()
+            if groups
+        }
+    return result
 
 
 def get_contacts_for_projects(db: DatabaseManager,

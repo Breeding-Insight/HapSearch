@@ -6,7 +6,7 @@ Tab-based interface variant of the microhaplotype analysis platform
 
 from dash import dcc, html, Input, Output, State, callback, ctx, no_update
 import dash_bootstrap_components as dbc
-from flask import redirect, session, render_template, send_from_directory
+from flask import redirect, session, send_from_directory
 
 import config
 import logging
@@ -29,6 +29,7 @@ server.register_blueprint(auth_bp)
 
 # Import session helpers
 from auth.session import is_authenticated, get_current_user, start_local_dev_session
+from database import allele_filter
 from auth.user_store import get_user_store
 
 if config.USER_STORE_PREFLIGHT:
@@ -48,17 +49,15 @@ if config.USER_STORE_PREFLIGHT:
 
 @server.route('/')
 def landing_page():
-    """Serve the public landing page.
+    """Send visitors to the app, the public landing page, or sign-in.
 
-    On Cloud Run the public landing page lives on GitHub Pages, so signed-out
-    visitors are sent there when HAPSEARCH_LANDING_URL is set.
+    The public landing page lives on GitHub Pages (landing/), so the service
+    serves none of its own: signed-out visitors go to HAPSEARCH_LANDING_URL,
+    or straight to sign-in when it is not set (e.g. local development).
     """
-    if config.LANDING_URL and not is_authenticated():
-        return redirect(config.LANDING_URL)
-    user = get_current_user() if is_authenticated() else None
-    return render_template('landing.html',
-                           app_env=config.APP_ENV,
-                           user=user)
+    if is_authenticated():
+        return redirect('/app/')
+    return redirect(config.LANDING_URL or '/auth/login')
 
 
 @server.route('/health')
@@ -103,7 +102,7 @@ def favicon():
     """Serve favicon with cache-busting-friendly source."""
     return send_from_directory(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'),
-        'HaploSearch_favicon_2.png',
+        'brand/hapsearch-icon.png',
         mimetype='image/png',
         max_age=0,
     )
@@ -149,10 +148,8 @@ def serve_layout():
     tabs = [
         dbc.Tab(
             overview.layout,
-            label="Overview",
-            tab_id="overview-tab",
-            label_style={"color": "#000000"},
-            active_label_style={"color": "#245842", "fontWeight": "700"},
+            label="Filter by Programs",
+            tab_id="programs-tab",
             tab_style={"marginRight": "5px"}
         ),
         dbc.Tab(
@@ -160,16 +157,17 @@ def serve_layout():
             label="Microhaplotypes",
             tab_id="haplotype-tab",
             tab_class_name="microhaplotypes-tab",
-            label_style={"color": "#000000"},
-            active_label_style={"color": "#245842", "fontWeight": "700"}
         ),
         dbc.Tab(
             marker_explorer.layout,
             label="Multiple Sequence Alignment",
             tab_id="marker-tab",
-            label_style={"color": "#000000"},
-            active_label_style={"color": "#245842", "fontWeight": "700"},
             tab_style={"marginRight": "5px"}
+        ),
+        dbc.Tab(
+            overview.database_layout,
+            label="Database Overview",
+            tab_id="database-tab",
         ),
     ]
 
@@ -177,8 +175,8 @@ def serve_layout():
     header_right_elts = [
         html.I(className="fas fa-user me-1"),
         user_display,
-        " | ",
-        html.A("Logout", href="/auth/logout", className="text-muted")
+        html.Span("|", className="app-header-sep", **{"aria-hidden": "true"}),
+        html.A("Log out", href="/auth/logout")
     ]
 
     layout_children = [
@@ -186,80 +184,81 @@ def serve_layout():
         dcc.Store(id='navigate-to-haplotype-store', data=None),
         dcc.Store(id='navigate-to-marker-store', data=None),
         dcc.Store(id='app-initialized-store', data=False),
-        html.Div([
+        # Header and footer follow the landing page (landing/index.html).
+        html.Header([
             html.Div([
-                html.Div([
-                    html.Div([
-                        html.Img(
-                            src="/static/Haplosearch%20logo_favicon.png",
-                            alt="HapSearch",
-                        )
-                    ], className="app-hero-icon"),
-                    html.H1([
-                        html.Span("Hap", className="hero-bold"),
-                        "Search"
-                    ], className="app-hero-title mb-0")
-                ], className="app-hero-left"),
-                html.Div([
-                    html.Div(id='db-status-header', className="text-end"),
-                    html.Div(header_right_elts, className="app-hero-user-line")
-                ], className="app-hero-right")
-            ], className="app-hero-top-row"),
-            html.P(
-                "Browse, search, and analyze microhaplotype data across species and projects.",
-                className="app-hero-subtitle"
-            )
-        ], className="app-hero-section"),
+                html.A(
+                    html.Img(src="/static/brand/breeding-insight-logo.png", alt="Breeding Insight",
+                             className="app-bi-logo"),
+                    href="https://breedinginsight.org/",
+                ),
+                html.Span(className="app-brand-divider", **{"aria-hidden": "true"}),
+                html.A([
+                    html.Img(src="/static/brand/hapsearch-logo.png", alt=""),
+                    html.Span([
+                        html.Span("Hap", className="wm-hap"),
+                        html.Span("Search", className="wm-search"),
+                    ], className="app-name"),
+                ], href="/app/", className="app-brand"),
+            ], className="app-header-left"),
+            html.Div([
+                html.Div(id='db-status-header', className="app-header-stats"),
+                html.Div(header_right_elts, className="app-header-user"),
+            ], className="app-header-right"),
+        ], className="app-header"),
 
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.Label("Select Species:", className="fw-bold me-3 mb-0"),
-                            dcc.Dropdown(
-                                id='global-species-dropdown',
-                                placeholder="Select a species...",
-                                style={'minWidth': '300px'}
-                            )
-                        ], style={'display': 'flex', 'alignItems': 'center'})
-                    ])
-                ], className="mb-3")
-            ], width=12)
-        ]),
+        # Global filters: every tab follows the species, programs and alleles
+        # chosen here (see database/allele_filter.py).
+        dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.Label("Species", htmlFor='global-species-dropdown',
+                                   className="fw-bold small mb-1"),
+                        dcc.Dropdown(id='global-species-dropdown', placeholder="Select a species..."),
+                    ], lg=3, md=12, className="mb-2 mb-lg-0"),
+                    dbc.Col([
+                        html.Label("Programs", htmlFor='global-programs-dropdown',
+                                   className="fw-bold small mb-1"),
+                        dcc.Dropdown(id='global-programs-dropdown', multi=True,
+                                     placeholder="All programs"),
+                    ], lg=5, md=12, className="mb-2 mb-lg-0"),
+                    dbc.Col([
+                        html.Label("Alleles", htmlFor='global-allele-filter',
+                                   className="fw-bold small mb-1"),
+                        dcc.Dropdown(id='global-allele-filter', value='any', clearable=False,
+                                     searchable=True),
+                    ], lg=4, md=12),
+                ], className="g-3"),
+            ])
+        ], className="mb-3 app-filter-bar"),
 
-        dbc.Tabs(tabs, id="main-tabs", active_tab="overview-tab", className="mb-4"),
+        dbc.Tabs(tabs, id="main-tabs", active_tab="programs-tab", className="mb-4"),
 
         html.Footer([
+            html.Ul([
+                html.Li(html.Img(src="/static/brand/breeding-insight-logo-white.png",
+                                 alt="Breeding Insight"), className="logo-bi"),
+                html.Li(html.Img(src="/static/brand/usda-ars-logo-white.png",
+                                 alt="USDA Agricultural Research Service")),
+                html.Li(html.A(html.Img(src="/static/brand/uf-ifas-logo.svg",
+                                        alt="University of Florida Institute of Food and Agricultural Sciences (UF/IFAS)"),
+                               href="https://ifas.ufl.edu/"), className="logo-ifas"),
+                html.Li(html.Img(src="/static/brand/cornell-logo-white.png", alt="Cornell University")),
+            ], className="app-partner-logos", **{"aria-label": "Partner organizations"}),
+            html.P(
+                "Breeding Insight is funded by the U.S. Department of Agriculture (USDA) Agricultural "
+                "Research Service (ARS) through University of Florida/IFAS. Formerly at Cornell University.",
+                className="app-funding",
+            ),
             html.Div([
-                html.Div([
-                    html.Img(
-                        src="/static/USDAARSIdentityColor_clearBKG.png",
-                        alt="USDA ARS Logo",
-                        style={"height": "50px", "width": "auto", "maxWidth": "150px"}
-                    ),
-                    html.Img(
-                        src="/static/IFAS-RGB.png",
-                        alt="UF/IFAS Logo",
-                        style={"height": "50px", "width": "auto", "maxWidth": "200px"}
-                    ),
-                    html.Img(
-                        src="/static/BreedingInsightLogo-RGB-1600px.png",
-                        alt="Breeding Insight Logo",
-                        style={"height": "50px", "width": "auto", "maxWidth": "200px"}
-                    ),
-                    html.Img(
-                        src="/static/cornell_seal_simple_web_b31b1b.png",
-                        alt="Cornell University Seal",
-                        style={"height": "50px", "width": "auto", "maxWidth": "80px"}
-                    ),
-                ], className="app-footer-logos"),
-                html.Div([
-                    html.Small("Funded by USDA-ARS and housed at University of Florida (UF/IFAS)."),
-                    html.Br(),
-                    html.Small("© 2026 Breeding Insight", style={"marginTop": "0.5rem", "display": "block"}),
-                ], className="app-footer-text"),
-            ], className="container")
+                html.P("© 2026 Breeding Insight"),
+                html.Ul([
+                    html.Li(html.A("About Breeding Insight", href="https://breedinginsight.org/about-bi/")),
+                    html.Li(html.A("Contact us", href="https://breedinginsight.org/contact-us/")),
+                    html.Li(html.A("Source code", href="https://github.com/Breeding-Insight/HapSearch")),
+                ]),
+            ], className="app-footer-bottom"),
         ], className="app-footer"),
     ]
 
@@ -302,6 +301,37 @@ def load_global_species(_):
 def update_global_species_store(species_id):
     """Update global species store when dropdown selection changes"""
     return species_id
+
+
+@callback(
+    Output('global-programs-dropdown', 'options'),
+    Output('global-programs-dropdown', 'value'),
+    Input('selected-species-store', 'data'),
+)
+def load_global_programs(species_id):
+    """List the species' programs, all selected by default."""
+    if not species_id:
+        return [], []
+    try:
+        catalog = allele_filter.program_catalog(int(species_id))
+        options = [{'label': group['label'], 'value': group['group_id']} for group in catalog]
+        return options, allele_filter.default_program_ids(int(species_id))
+    except Exception:
+        return [], []
+
+
+@callback(
+    Output('global-allele-filter', 'options'),
+    Output('global-allele-filter', 'value'),
+    Input('global-programs-dropdown', 'value'),
+    State('selected-species-store', 'data'),
+)
+def load_allele_filter_options(program_ids, species_id):
+    """Offer allele filters for the selected programs; reset to all alleles."""
+    try:
+        return allele_filter.allele_filter_options(species_id, program_ids), allele_filter.ANY
+    except Exception:
+        return [], allele_filter.ANY
 
 
 # Callback to update database status header
@@ -349,7 +379,7 @@ def mark_app_initialized_on_tab_change(active_tab, current_initialized):
     """Mark app as initialized when user manually changes tabs"""
     if current_initialized:
         return no_update
-    if active_tab == "overview-tab":
+    if active_tab == "programs-tab":
         return False
     return True
 

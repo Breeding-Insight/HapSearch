@@ -260,7 +260,7 @@ layout = dbc.Container([
                     )
                 ], label="Alignment Viewer", tab_id="viewer-tab",
                    label_style={"color": "#495057"},
-                   active_label_style={"color": "#245842"}),
+                   active_label_style={"color": "#066a73"}),
 
                 # JalviewJS editor tab
                 dbc.Tab([
@@ -300,14 +300,14 @@ layout = dbc.Container([
                     ])
                 ], label="Edit in JalviewJS", tab_id="jalview-tab",
                    label_style={"color": "#495057"},
-                   active_label_style={"color": "#245842"}),
+                   active_label_style={"color": "#066a73"}),
 
                 # Variant analysis tab
                 dbc.Tab([
                     html.Div(id='variant-analysis-container', className="mt-3")
                 ], label="Variant Analysis", tab_id="variants-tab",
                    label_style={"color": "#495057"},
-                   active_label_style={"color": "#245842"})
+                   active_label_style={"color": "#066a73"})
             ], id="main-tabs", active_tab="viewer-tab")
         ], width=9)
     ])
