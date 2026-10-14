@@ -140,8 +140,9 @@ created.
   wake-up script; `/robots.txt` disallows all crawling
 
 These settings, the environment variables and the secret references all live in
-the deploy step of `cloudbuild.yaml`, so every run applies them. Set
-`_LANDING_URL` on the trigger once the GitHub Pages landing page exists.
+the deploy step of `cloudbuild.yaml`, so every run applies them. `_LANDING_URL`
+defaults to the GitHub Pages landing page; override it on the trigger only if the
+page moves.
 
 Cloud Run terminates HTTPS, so keep `TLS_ENABLED=false`. The ORCID redirect URI must be
 `https://YOUR-SERVICE-URL/auth/callback`.
@@ -161,12 +162,16 @@ The service URL appears three times in `landing/index.html` (both sign-in links 
 To set it up once:
 
 1. In the GitHub repository, set **Settings → Pages → Source** to **GitHub Actions**.
-2. Push to `main` (or run the workflow manually) and note the published URL, e.g.
+2. Merge into `feature-MSA` (which runs the workflow) and note the published URL, e.g.
    `https://breeding-insight.github.io/HapSearch/`.
-3. Set `_LANDING_URL` on the Cloud Build trigger to that URL and redeploy.
+3. If the published URL is not `https://breeding-insight.github.io/HapSearch/`, set
+   `_LANDING_URL` on the Cloud Build trigger to it and redeploy.
 
-Signed-out visitors to `/` are then redirected to `HAPSEARCH_LANDING_URL`. While it is
-empty, the built-in page in `templates/landing.html` is served instead.
+The service serves no landing page of its own. `/` sends signed-in users to `/app/`
+and signed-out visitors to `HAPSEARCH_LANDING_URL`, and signing out goes there too.
+When `HAPSEARCH_LANDING_URL` is empty (as in local development), `/` goes straight to
+ORCID sign-in, so signing out while still signed in to ORCID signs you straight back
+in.
 
 ## Known limits
 

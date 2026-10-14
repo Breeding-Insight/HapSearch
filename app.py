@@ -6,7 +6,7 @@ Tab-based interface variant of the microhaplotype analysis platform
 
 from dash import dcc, html, Input, Output, State, callback, ctx, no_update
 import dash_bootstrap_components as dbc
-from flask import redirect, session, render_template, send_from_directory
+from flask import redirect, session, send_from_directory
 
 import config
 import logging
@@ -48,17 +48,15 @@ if config.USER_STORE_PREFLIGHT:
 
 @server.route('/')
 def landing_page():
-    """Serve the public landing page.
+    """Send visitors to the app, the public landing page, or sign-in.
 
-    On Cloud Run the public landing page lives on GitHub Pages, so signed-out
-    visitors are sent there when HAPSEARCH_LANDING_URL is set.
+    The public landing page lives on GitHub Pages (landing/), so the service
+    serves none of its own: signed-out visitors go to HAPSEARCH_LANDING_URL,
+    or straight to sign-in when it is not set (e.g. local development).
     """
-    if config.LANDING_URL and not is_authenticated():
-        return redirect(config.LANDING_URL)
-    user = get_current_user() if is_authenticated() else None
-    return render_template('landing.html',
-                           app_env=config.APP_ENV,
-                           user=user)
+    if is_authenticated():
+        return redirect('/app/')
+    return redirect(config.LANDING_URL or '/auth/login')
 
 
 @server.route('/health')

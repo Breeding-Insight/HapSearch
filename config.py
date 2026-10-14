@@ -35,8 +35,9 @@ TLS_CERT_PATH = os.getenv('TLS_CERT_PATH', '/cert.pem')
 TLS_KEY_PATH = os.getenv('TLS_KEY_PATH', '/key.pem')
 SSL_CONTEXT = (TLS_CERT_PATH, TLS_KEY_PATH) if TLS_ENABLED else None
 
-# Public landing page (GitHub Pages) for the Cloud Run deployment. When set,
-# signed-out visitors to / are redirected there instead of the built-in page.
+# Public landing page (GitHub Pages) for the Cloud Run deployment. Signed-out
+# visitors to / and sign-outs are redirected there; when it is empty, / goes
+# straight to ORCID sign-in.
 LANDING_URL = os.getenv('HAPSEARCH_LANDING_URL', '').strip()
 
 # ORCID allowlist backend: 'firestore' on Cloud Run (K_SERVICE is set there),

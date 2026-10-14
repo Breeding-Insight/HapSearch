@@ -112,6 +112,10 @@ def callback():
 
 @auth_bp.route('/logout')
 def logout():
-    """Clear the session and redirect to the landing page."""
+    """Clear the session and redirect to the landing page.
+
+    Without a landing page this goes to /, which starts sign-in again; a
+    visitor still signed in to ORCID is then signed straight back in.
+    """
     session.clear()
-    return redirect('/')
+    return redirect(config.LANDING_URL or '/')

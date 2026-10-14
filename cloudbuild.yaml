@@ -22,8 +22,9 @@ substitutions:
   # Cloud Build 2nd-gen GitHub connection holding the linked data repositories.
   _GITHUB_CONNECTION: github
   _FIRESTORE_DATABASE: hapsearch-db
-  # Public GitHub Pages landing page; empty serves the built-in one.
-  _LANDING_URL: ""
+  # Public landing page (landing/ on GitHub Pages). Signed-out visitors and
+  # sign-outs are sent here; empty sends visitors straight to ORCID sign-in.
+  _LANDING_URL: "https://breeding-insight.github.io/HapSearch/"
 
 steps:
   # 1. Fetch every data source at its ref, then build and check the database.
