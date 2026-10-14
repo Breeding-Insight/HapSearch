@@ -1094,6 +1094,11 @@ def update_samples_table(samples_data, search_filter, current_page):
             'rowHeight': 38,
             'domLayout': 'autoHeight',
             'suppressCellFocus': True,
+            # Let people select and copy cell text.
+            'enableCellTextSelection': True,
+            'ensureDomOrder': True,
+            # A drag that starts on a header would otherwise reorder columns.
+            'suppressMovableColumns': True,
             'pagination': True,
             'paginationPageSize': 10,
             # Disable user ability to change page size
@@ -1261,6 +1266,11 @@ def create_projects_cards(projects, contacts_data=None):
             'rowHeight': 36,
             'domLayout': 'autoHeight',
             'suppressCellFocus': True,
+            # Let people select and copy cell text.
+            'enableCellTextSelection': True,
+            'ensureDomOrder': True,
+            # A drag that starts on a header would otherwise reorder columns.
+            'suppressMovableColumns': True,
             'pagination': True,
             'paginationPageSize': 5,
             # Disable user ability to change page size
@@ -1310,6 +1320,11 @@ def create_contact_section(projects, contacts_data=None, rows=None):
             'rowHeight': 36,
             'domLayout': 'autoHeight',
             'suppressCellFocus': True,
+            # Let people select and copy cell text.
+            'enableCellTextSelection': True,
+            'ensureDomOrder': True,
+            # A drag that starts on a header would otherwise reorder columns.
+            'suppressMovableColumns': True,
             'pagination': True,
             'paginationPageSize': 10,
             'paginationPageSizeSelector': False,
