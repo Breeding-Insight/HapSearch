@@ -148,9 +148,25 @@ Cloud Run terminates HTTPS, so keep `TLS_ENABLED=false`. The ORCID redirect URI 
 
 ## Landing page
 
-Signed-out visitors to `/` are redirected to `HAPSEARCH_LANDING_URL` (when it is empty,
-the built-in landing page is served as before). The BI pattern puts that page on GitHub
-Pages with the shared `wake.js` script; see the HapApp and AlloMate `landing/` folders.
+The public landing page is the static site in `landing/`, published to GitHub Pages by
+`.github/workflows/pages.yml` on every push to `main` that changes it. It follows the
+Breeding Insight pattern shared with HapApp and AlloMate: its sign-in links point at the
+Cloud Run service, and `landing/assets/wake.js` wakes the service through `/health` when a
+visitor clicks one, showing a "Starting HapSearch…" state during a cold start. Keep
+`wake.js` identical to the copies in the other BI app repositories.
+
+The service URL appears three times in `landing/index.html` (both sign-in links and the
+`wake.js` script tag); update all three together if it changes.
+
+To set it up once:
+
+1. In the GitHub repository, set **Settings → Pages → Source** to **GitHub Actions**.
+2. Push to `main` (or run the workflow manually) and note the published URL, e.g.
+   `https://breeding-insight.github.io/HapSearch/`.
+3. Set `_LANDING_URL` on the Cloud Build trigger to that URL and redeploy.
+
+Signed-out visitors to `/` are then redirected to `HAPSEARCH_LANDING_URL`. While it is
+empty, the built-in page in `templates/landing.html` is served instead.
 
 ## Known limits
 
