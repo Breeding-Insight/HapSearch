@@ -52,4 +52,4 @@ project_presence = "hapPA/{fasta}_hapPA_matrix.csv"
 [checks]
 # Fail the build when more than this share of a matrix's alleles are missing
 # from the FASTA, which usually means the FASTA version does not match the calls.
-max_skipped_allele_fraction = 0.02
+max_skipped_allele_fraction = 0.04
