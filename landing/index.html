@@ -10,7 +10,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="HapSearch is a search interface for Breeding Insight's microhaplotype databases: find alleles by species, sequence or project, compare them in alignments, and connect with the breeding programs that hold them.">
+    <meta name="description" content="HapSearch is a search interface for Breeding Insight's microhaplotype databases: find alleles by species, sequence, or project, compare them in alignments, and connect with the breeding programs that hold them.">
     <title>HapSearch | Breeding Insight</title>
     <link rel="icon" type="image/png" href="assets/hapsearch-icon.png">
     <style>
@@ -232,18 +232,6 @@
       /* Wordmark colors match the logo (and HapApp's wordmark). */
       .app-name .wm-hap { color: #115c55; }
       .app-name .wm-search { color: #25a244; }
-
-      /* Screenshots */
-      .feature-card { gap: 14px; }
-      .shot {
-        margin: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
-        background: var(--surface-alt);
-      }
-      .shot img { display: block; width: 100%; height: auto; }
-      .questions { margin: 16px 0 0; padding-left: 1.25em; color: var(--ink); font-weight: 600; }
-      .questions li + li { margin-top: 8px; }
-      .grid-2 { grid-template-columns: repeat(2, 1fr); }
-      @media (max-width: 960px) { .grid-2 { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -272,7 +260,7 @@
         </div>
         <nav class="site-nav" aria-label="Page sections">
           <ul>
-            <li><a href="#about">MADC files</a></li>
+            <li><a href="#about">Microhaplotypes</a></li>
             <li><a href="#database">Microhaplotype Database</a></li>
             <li><a href="#tools">Genomic Analysis</a></li>
           </ul>
@@ -285,11 +273,10 @@
         <div class="wrap">
           <div>
             <span class="eyebrow">Breeding Insight microhaplotype search</span>
-            <h1 id="hero-title">Search microhaplotypes across species, projects and breeding programs</h1>
+            <h1 id="hero-title">Search microhaplotypes across species, projects, and breeding programs</h1>
             <p class="lead">
-              HapSearch is a searchable interface to Breeding Insight&rsquo;s microhaplotype databases. Look up a marker,
-              sequence or sample, compare every allele at a locus in a sequence alignment, and trace each allele to
-              the breeding projects, samples and collaborators behind it.
+              HapSearch is a searchable interface to Breeding Insight&rsquo;s microhaplotype databases. Look up a marker, sequence, or sample, compare every allele at a locus in a sequence alignment, and trace each allele to
+              the breeding projects, samples, and collaborators behind it.
             </p>
             <div class="hero-actions">
               <a class="btn btn-primary" href="https://hapsearch-510101458052.us-west1.run.app/auth/login" data-launch>
@@ -310,74 +297,46 @@
       <section class="band" id="about" aria-labelledby="about-title">
         <div class="wrap split">
           <div class="section-head" style="margin-bottom:0">
-            <h2 id="about-title">What makes MADC files different?</h2>
+            <h2 id="about-title">About Microhaplotypes</h2>
             <p>
-              Most genotyping reports reduce each marker to two alleles, a reference and an alternative, discarding
-              any additional variation found at that locus. A DArTag Missing Allele Discovery Count (MADC) report
-              contains all alleles, including those &ldquo;missing&rdquo; from the initial panel design, which are now
-              recognized as newly discovered variants. Specifically, an MADC report retains the full microhaplotype
-              sequences found at each marker locus, along with read counts for every allele at every locus across
-              every sample. This means a single locus can carry many alleles rather than just two, preserving the
-              full scope of genetic variation captured by the sequencing read. HapApp works directly with this
-              multi-allelic data by processing the microhaplotype sequences in the MADC report, rather than
-              collapsing them to biallelic SNPs before analysis.
+              Microhaplotypes are short genomic segments (typically 54-109 bp) containing two or more closely spaced
+              variants that are inherited together as a single unit. Unlike single SNPs which are bi-allelic,
+              microhaplotypes are multi-allelic markers that provide significantly higher information content for
+              diversity analysis, QTL discovery, and genomic selection in plant breeding.
             </p>
             <p>
-              The practical advantage of keeping multi-allelic data is that nearby SNPs within a sequencing read are
-              inherited together on the same genomic segment. Therefore, the combination of variants is recorded
-              rather than each variant being called independently. Collapsing into a single SNP discards this
-              co-occurrence information, reducing a potentially highly informative multi-allelic marker to a simple
-              presence/absence call.
+              Because the SNPs within a microhaplotype are sequenced together in the same short read, their phase is
+              directly observed, making them highly informative, phase-known markers. This multi-allelic nature and
+              strong linkage make microhaplotypes especially powerful for characterizing germplasm, where unique and
+              trait-associated microhaplotypes can be tracked within and across breeding populations to inform
+              designing crosses.
             </p>
           </div>
           <div class="section-head" style="margin-bottom:0">
-            <h2>Microhaplotype data in one place</h2>
+            <h2>HapSearch Platform</h2>
             <p>
-              Specialty crop breeding programs at Breeding Insight, USDA-ARS and partner institutions generate
-              microhaplotype data across many projects and research groups, but it often sits in separate
-              spreadsheets, local databases and one-off scripts. HapSearch brings microhaplotypes, variants and
-              sample information together in one interface and links each sequence to the breeding projects and
-              samples it came from.
+              HapSearch centralizes fragmented microhaplotype data generated from the DArTag targeted genotyping
+              platform across multiple breeding programs. The platform enables targeted mining of alleles of interest
+              by crop species, sequence similarity, and project-specific keywords, with integrated filters to narrow
+              results to specific loci. It also provides multiple sequence alignment views to display locus-level
+              variation and help users identify accessions carrying unique microhaplotype alleles, while connecting
+              sequence-level information to breeding projects and samples for marker evaluation and decision support.
+              By improving data discoverability and cross-project visibility, HapSearch supports collaboration and
+              resource exchange across breeding and research communities.
             </p>
-            <p>That makes practical breeding questions quick to answer yourself, such as:</p>
-            <ul class="questions">
-              <li>Which haplotypes are present in my best-performing parents?</li>
-              <li>Which markers tag the target SNPs for a trait of interest?</li>
-              <li>Which alleles occur at a locus, and how common is each one?</li>
-              <li>Which collaborators hold germplasm carrying a specific allele?</li>
-            </ul>
           </div>
         </div>
       </section>
 
-      <section class="band alt" id="features" aria-label="Screenshots">
-        <div class="wrap">
-          <div class="grid grid-2">
-            <article class="card feature-card">
-              <figure class="shot">
-                <img src="assets/screenshots/haplotype-explorer.png" width="1400" height="409" loading="lazy"
-                     alt="The Haplotype Explorer: search filters on the left, and on the right the details of one microhaplotype with its frequency, sample count, project count and sequence.">
-              </figure>
-            </article>
-            <article class="card feature-card">
-              <figure class="shot">
-                <img src="assets/screenshots/alignment.png" width="992" height="312" loading="lazy"
-                     alt="A multiple sequence alignment of ten allele variants of one marker, with color-coded nucleotides and variant markers above the columns.">
-              </figure>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="band" id="database" aria-labelledby="database-title">
+      <section class="band alt" id="database" aria-labelledby="database-title">
         <div class="wrap split">
           <div>
             <div class="section-head" style="margin-bottom:0">
               <h2 id="database-title">Breeding Insight&rsquo;s Microhaplotype Database</h2>
               <p>
                 Breeding Insight maintains standardized, species-specific microhaplotype databases built from
-                DArTag data contributed by USDA-ARS, university and other breeding programs. Each allele has one
-                permanent ID, so results line up across years, projects and institutions. New reports processed
+                DArTag data contributed by USDA-ARS, university, and other breeding programs. Each allele has one
+                permanent ID, so results line up across years, projects, and institutions. New reports processed
                 with <a href="https://breeding-insight.github.io/HapApp-online/">HapApp</a> add newly discovered
                 alleles, so the databases HapSearch draws on keep growing. The framework and the initial databases
                 are described in a peer-reviewed publication.
@@ -400,7 +359,7 @@
         </div>
       </section>
 
-      <section class="band alt" id="tools" aria-labelledby="tools-title">
+      <section class="band" id="tools" aria-labelledby="tools-title">
         <div class="wrap">
           <div class="section-head">
             <h2 id="tools-title">Continue your analysis with Breeding Insight tools</h2>
@@ -502,7 +461,7 @@
         </div>
       </section>
 
-      <section class="band cta" aria-label="Sign in">
+      <section class="band alt cta" aria-label="Sign in">
         <div class="wrap">
           <div class="section-head">
             <p>Sign in with your ORCID iD to search Breeding Insight&rsquo;s microhaplotype databases with HapSearch.</p>
