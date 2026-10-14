@@ -54,6 +54,20 @@ DEFAULT_OWNER_CONTACTS_PATH = os.path.join(
 PRESENCE_FILE_SUFFIXES = ('.csv', '.csv.gz', '.tsv', '.tsv.gz')
 
 
+def normalize_sample_code(value) -> str:
+    """Sample name from a presence-file header, without surrounding quotes.
+
+    Some sample files wrap names that contain spaces in literal quote marks
+    (the CSV header field is the name between three double quotes on each
+    side), so pandas reads the quotes as part of the name, e.g.
+    '"1_1-Parent P53V08"'. One matching pair of surrounding quotes is removed.
+    """
+    code = str(value).strip()
+    if len(code) >= 2 and code[0] == code[-1] and code[0] in "\"'":
+        code = code[1:-1].strip()
+    return code
+
+
 class PresenceImporter:
     """Import allele-sample presence/absence data from CSV files"""
 
@@ -356,6 +370,9 @@ class PresenceImporter:
         if len(df.columns) < 2:
             raise ValueError("CSV must have at least 2 columns (AlleleID + at least one sample)")
 
+        # Clean the sample headers on the frame itself, so the cleaned names
+        # are both what is stored and what selects the columns below.
+        df.columns = [df.columns[0]] + [normalize_sample_code(col) for col in df.columns[1:]]
         allele_id_col = df.columns[0]
         sample_columns = df.columns[1:].tolist()
 
@@ -388,8 +405,8 @@ class PresenceImporter:
 
         in_clause_chunk = 400
 
-        # Normalize sample headers once and preserve order.
-        sample_columns = [str(col).strip() for col in sample_columns if str(col).strip()]
+        # Drop empty sample headers, preserving order.
+        sample_columns = [col for col in sample_columns if col]
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
