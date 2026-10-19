@@ -161,6 +161,8 @@ layout = dbc.Container([
     dcc.Store(id='samples-search-filter', data=''),
     # Store for samples table page
     dcc.Store(id='samples-table-page', data=1),
+    # "Selected alleles" line, filled by pages/overview.py.
+    html.Div(id='haplotype-filter-status', className="mb-3"),
 
     dbc.Row([
         # Left panel: Search and browse with separate scrolling
