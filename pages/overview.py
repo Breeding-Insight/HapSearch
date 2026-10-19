@@ -8,7 +8,7 @@ This page provides a comprehensive overview with:
 Goals 2 & 3 (marker and haplotype search) are available in dedicated explorer tabs.
 """
 
-from dash import dcc, html, Input, Output, State, ctx, no_update
+from dash import dcc, html, Input, Output, State, ALL, ctx, no_update
 import dash_bootstrap_components as dbc
 import math
 import re
@@ -170,6 +170,7 @@ layout = dbc.Container([
                     "Alleles Shared Between Programs"
                 ]),
                 dbc.CardBody([
+                    html.Div(id='overview-filter-status', className="overview-filter-status mb-2"),
                     html.Div([
                         html.Div(id='overview-sharing-summary'),
                         _plot_export_controls(
@@ -180,7 +181,6 @@ layout = dbc.Container([
                             default_height=7.5,
                         ),
                     ], className="d-flex justify-content-between align-items-start gap-3 mb-2"),
-                    html.Div(id='overview-filter-status', className="overview-filter-status mb-2"),
                     _overview_loading(
                         dcc.Graph(
                             id='overview-sharing-chart',
@@ -1147,51 +1147,70 @@ def filter_from_sharing_chart(click_data, chart_state, current_value):
     return allele_filter.ANY if value == current_value else value
 
 
+def _filter_status(tab, label, count, filtered):
+    """The "Selected alleles" line. The filter tab also offers the tabs that
+    follow the filter; Clear appears only while a filter is set."""
+    children = [
+        html.Span("Selected alleles:", className="selected-alleles-label"),
+        html.Span([html.Strong(label), f" ({count:,})"]),
+    ]
+    if filtered:
+        children.append(html.Button("Clear", id={'type': 'allele-filter-clear', 'tab': tab},
+                                    className="btn btn-link btn-sm p-0"))
+    if tab == 'programs':
+        children.append(html.Span([
+            html.Button([html.I(className="fas fa-magnifying-glass me-2"), "View in Microhaplotypes"],
+                        id='overview-open-haplotypes', className="btn btn-primary btn-sm"),
+            html.Button([html.I(className="fas fa-align-left me-2"), "View loci in Multiple Sequence Alignment"],
+                        id='overview-open-alignment', className="btn btn-outline-secondary btn-sm haplo-action-btn"),
+        ], className="selected-alleles-actions"))
+    return html.Div(children, className="selected-alleles")
+
+
+# Where each tab shows the line (the other two sit at the top of their tabs).
+FILTER_STATUS_IDS = {
+    'programs': 'overview-filter-status',
+    'haplotype': 'haplotype-filter-status',
+    'marker': 'marker-filter-status',
+}
+FILTER_STATUS_TABS = tuple(FILTER_STATUS_IDS)
+
+
 @app.callback(
-    Output('overview-filter-status', 'children'),
+    [Output(status_id, 'children') for status_id in FILTER_STATUS_IDS.values()],
     Input('selected-species-store', 'data'),
     Input('global-programs-dropdown', 'value'),
     Input('global-allele-filter', 'value'),
     State('global-allele-filter', 'options'),
 )
 def show_filter_status(species_id, program_ids, allele_filter_value, options):
-    """Say what the allele filter keeps and offer the tabs that use it."""
+    """Say what the allele filter keeps, on every tab that follows it."""
     if not species_id:
-        return None
+        return [None] * len(FILTER_STATUS_TABS)
     try:
         kept = allele_filter.resolve_allele_filter(species_id, program_ids, allele_filter_value)
     except Exception as e:
-        return dbc.Alert(f"Error: {str(e)}", color="danger")
+        return [dbc.Alert(f"Error: {str(e)}", color="danger")] * len(FILTER_STATUS_TABS)
     if kept is None:
         # No restriction: every allele in the selected programs.
         count = len(allele_filter.sharing_data(int(species_id), program_ids)
                     .get("microhaplotype_groups") or {})
-        return html.Div([
-            html.Span("Selected alleles:", className="selected-alleles-label"),
-            html.Span([html.Strong("All alleles in the selected programs"), f" ({count:,})"]),
-        ], className="selected-alleles")
-    label = next((option['label'] for option in options or []
-                  if option['value'] == allele_filter_value), "Selected programs")
-    return html.Div([
-        html.Span("Selected alleles:", className="selected-alleles-label"),
-        html.Span([html.Strong(label), f" ({len(kept):,})"]),
-        html.Button("Clear", id='overview-clear-filter', className="btn btn-link btn-sm p-0"),
-        html.Span([
-            html.Button([html.I(className="fas fa-magnifying-glass me-2"), "View in Microhaplotypes"],
-                        id='overview-open-haplotypes', className="btn btn-primary btn-sm"),
-            html.Button([html.I(className="fas fa-align-left me-2"), "View loci in Multiple Sequence Alignment"],
-                        id='overview-open-alignment', className="btn btn-outline-secondary btn-sm haplo-action-btn"),
-        ], className="selected-alleles-actions"),
-    ], className="selected-alleles")
+        label, filtered = "All alleles in the selected programs", False
+    else:
+        count = len(kept)
+        label = next((option['label'] for option in options or []
+                      if option['value'] == allele_filter_value), "Selected programs")
+        filtered = True
+    return [_filter_status(tab, label, count, filtered) for tab in FILTER_STATUS_TABS]
 
 
 @app.callback(
     Output('global-allele-filter', 'value', allow_duplicate=True),
-    Input('overview-clear-filter', 'n_clicks'),
+    Input({'type': 'allele-filter-clear', 'tab': ALL}, 'n_clicks'),
     prevent_initial_call=True
 )
 def clear_allele_filter(n_clicks):
-    return allele_filter.ANY if n_clicks else no_update
+    return allele_filter.ANY if any(n_clicks or []) else no_update
 
 
 @app.callback(

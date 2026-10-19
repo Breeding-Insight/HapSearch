@@ -152,6 +152,8 @@ layout = dbc.Container([
     ),
     dcc.Store(id='marker-left-panel-minimized', data=False),
     dcc.Store(id='marker-results-page', data=1),
+    # "Selected alleles" line, filled by pages/overview.py.
+    html.Div(id='marker-filter-status', className="mb-3"),
 
     create_single_view_layout()
 
