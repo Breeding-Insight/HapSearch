@@ -425,19 +425,24 @@ layout = dbc.Container([
 
 @app.callback(
     Output('haplotype-chromosome-filter', 'options'),
+    Output('haplotype-chromosome-filter', 'value'),
+    Output('haplotype-marker-filter', 'value'),
+    Output('haplotype-sequence-search', 'value'),
+    Output('haplotype-sample-filter', 'value'),
     Input('selected-species-store', 'data')
 )
 def load_haplotype_chromosomes(species_id):
-    """Load chromosomes for selected species (Microhaplotypes tab)"""
+    """Load the species' chromosomes and clear filters left from the previous species."""
     if not species_id:
-        return []
+        return [], None, None, None, None
     try:
         db = DatabaseManager()
         with db.shared_connection():
             chromosomes = get_all_chromosomes_for_species(db, species_id)
-        return [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
+        options = [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
     except Exception:
-        return []
+        options = []
+    return options, None, None, None, None
 
 
 @app.callback(
@@ -687,15 +692,20 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
      Output('samples-section-wrapper', 'style')],
     Input({'type': 'haplotype-list-item', 'index': dash.ALL}, 'n_clicks'),
     Input('navigate-to-haplotype-store', 'data'),
+    Input('selected-species-store', 'data'),
     State('haplotype-detail-content', 'children'),
     prevent_initial_call=True
 )
-def show_haplotype_details(n_clicks, navigate_data, current_details):
+def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details):
     """Display selected haplotype details"""
     haplotype_name = None
 
     # Check what triggered the callback
     triggered = ctx.triggered_id if ctx.triggered else None
+
+    # A new species clears the previous species' microhaplotype.
+    if triggered == 'selected-species-store':
+        current_details = None
 
     # Priority 1: Check navigation store first (for cross-tab navigation)
     if triggered == 'navigate-to-haplotype-store':

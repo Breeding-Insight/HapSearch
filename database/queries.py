@@ -195,7 +195,7 @@ def get_all_species(db: DatabaseManager) -> List[Dict[str, Any]]:
         LEFT JOIN markers mk ON c.id = mk.chromosome_id
         LEFT JOIN microhaplotypes m ON mk.id = m.marker_id
         GROUP BY s.id, s.name, s.common_name, s.description
-        ORDER BY s.name
+        ORDER BY COALESCE(s.common_name, s.name) COLLATE NOCASE, s.name
     """
     return db.execute_query(query)
 
