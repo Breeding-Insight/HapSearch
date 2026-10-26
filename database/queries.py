@@ -8,6 +8,7 @@ import numpy as np
 from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
     entity_ids_for_microhaplotype,
+    entity_row,
     load_presence_artifact,
     microhaplotype_ids_for_entity,
 )
@@ -194,7 +195,7 @@ def get_all_species(db: DatabaseManager) -> List[Dict[str, Any]]:
         LEFT JOIN markers mk ON c.id = mk.chromosome_id
         LEFT JOIN microhaplotypes m ON mk.id = m.marker_id
         GROUP BY s.id, s.name, s.common_name, s.description
-        ORDER BY s.name
+        ORDER BY COALESCE(s.common_name, s.name) COLLATE NOCASE, s.name
     """
     return db.execute_query(query)
 
@@ -1527,7 +1528,7 @@ def get_microhaplotype_accumulation_data(
                 else loaded_project_artifacts
             )
             for artifact in artifacts:
-                row_idx = artifact["entity_index"].get(entity_id)
+                row_idx = entity_row(artifact, entity_id)
                 if row_idx is not None:
                     np.bitwise_or(
                         ordered_packed_rows[ordered_index],
@@ -1575,7 +1576,7 @@ def get_microhaplotype_accumulation_data(
             else loaded_project_artifacts
         )
         for artifact in artifacts:
-            row_idx = artifact["entity_index"].get(entity_id)
+            row_idx = entity_row(artifact, entity_id)
             if row_idx is None:
                 continue
             bits = np.unpackbits(

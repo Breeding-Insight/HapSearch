@@ -162,20 +162,24 @@ layout = dbc.Container([
 
 @app.callback(
     Output('marker-chromosome-filter', 'options'),
+    Output('marker-chromosome-filter', 'value'),
+    Output('marker-search-input', 'value'),
+    Output('marker-sequence-search-input', 'value'),
     Input('selected-species-store', 'data')
 )
 def load_chromosomes(species_id):
-    """Load chromosomes for selected species"""
+    """Load the species' chromosomes and clear filters left from the previous species."""
     if not species_id:
-        return []
+        return [], None, None, None
 
     try:
         db = DatabaseManager()
         with db.shared_connection():
             chromosomes = get_all_chromosomes_for_species(db, species_id)
-        return [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
+        options = [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
     except Exception:
-        return []
+        options = []
+    return options, None, None, None
 
 
 
@@ -316,14 +320,19 @@ def search_markers(search_term, sequence_search, species_id, chromosome_id, curr
      Output('navigate-to-marker-store', 'data', allow_duplicate=True)],
     Input({'type': 'marker-list-item', 'index': dash.ALL}, 'n_clicks'),
     Input('navigate-to-marker-store', 'data'),
+    Input('selected-species-store', 'data'),
     State('marker-detail-store', 'data'),
     prevent_initial_call=True
 )
-def show_marker_details(n_clicks, navigate_data, current_marker_id):
+def show_marker_details(n_clicks, navigate_data, _species_id, current_marker_id):
     """Display selected marker details"""
     marker_id = None
 
     triggered = ctx.triggered_id if ctx.triggered else None
+
+    # A new species clears the previous species' locus and its alignment.
+    if triggered == 'selected-species-store':
+        current_marker_id = None
 
     if triggered == 'navigate-to-marker-store':
         if navigate_data and isinstance(navigate_data, dict) and navigate_data.get('marker_id'):

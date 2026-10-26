@@ -215,7 +215,8 @@ def serve_layout():
                     dbc.Col([
                         html.Label("Species", htmlFor='global-species-dropdown',
                                    className="fw-bold small mb-1"),
-                        dcc.Dropdown(id='global-species-dropdown', placeholder="Select a species..."),
+                        dcc.Dropdown(id='global-species-dropdown', placeholder="Select a species...",
+                                     clearable=False),
                     ], lg=3, md=12, className="mb-2 mb-lg-0"),
                     dbc.Col([
                         html.Label("Programs", htmlFor='global-programs-dropdown',

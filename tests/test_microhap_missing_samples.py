@@ -265,6 +265,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
             detail, _, _, toggle_children, _ = explorer.show_haplotype_details(
                 n_clicks=[1],
                 navigate_data=None,
+                _species_id=1,
                 current_details=None,
             )
 
