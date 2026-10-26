@@ -7,6 +7,8 @@ with expandable sample/project information
 import dash
 from dash import dcc, html, Input, Output, State, no_update, ctx
 import dash_bootstrap_components as dbc
+import csv
+import io
 import re
 try:
     import dash_ag_grid as dag
@@ -157,6 +159,9 @@ layout = dbc.Container([
     dcc.Store(id='haplotype-results-page', data=1),
     # Stores for samples table data
     dcc.Store(id='samples-data-store', data=None),
+    # File name (without .csv) for the saved sample list
+    dcc.Store(id='samples-download-name-store', data=None),
+    dcc.Download(id='samples-download'),
     # Store for sample search filter
     dcc.Store(id='samples-search-filter', data=''),
     # Store for samples table page
@@ -199,13 +204,13 @@ layout = dbc.Container([
                             )
                         ], id='haplotype-chromosome-container'),
 
-                        # Allele ID filter
+                        # Clone ID filter
                         html.Div([
-                            html.Label("Allele ID:", className="fw-bold small", id='haplotype-marker-label'),
+                            html.Label("Clone ID:", className="fw-bold small", id='haplotype-marker-label'),
                             dbc.Input(
                                 id='haplotype-marker-filter',
                                 type='text',
-                                placeholder='Search allele ID...',
+                                placeholder='Search clone ID...',
                                 debounce=True,
                                 className="mb-3"
                             )
@@ -389,13 +394,22 @@ layout = dbc.Container([
                             # Search input for samples table
                             html.Div([
                                 html.Label("Search samples:", className="fw-bold small mb-2"),
-                                dbc.Input(
-                                    id='samples-search-input',
-                                    type='text',
-                                    placeholder='Search samples...',
-                                    debounce=True,
-                                    className="mb-3"
-                                )
+                                html.Div([
+                                    dbc.Input(
+                                        id='samples-search-input',
+                                        type='text',
+                                        placeholder='Search samples...',
+                                        debounce=True,
+                                    ),
+                                    dbc.Button(
+                                        [html.I(className="fas fa-download me-2"), "Save CSV"],
+                                        id='samples-download-btn',
+                                        color="secondary",
+                                        outline=True,
+                                        size="sm",
+                                        className="haplo-action-btn text-nowrap",
+                                    ),
+                                ], className="d-flex align-items-center gap-2 mb-3"),
                             ], id='samples-search-container'),
                             # Samples table
                             html.Div(id='samples-table-body'),
@@ -553,9 +567,9 @@ def update_haplotype_page(
                 db,
                 species_id=species_id,
                 chromosome_id=chromosome_id,
-                search_name=None,
+                # Match the full Clone ID (chr1.1_000309952|Alt_0002), not just its locus.
+                search_name=marker_filter,
                 search_sequence=seq_search,
-                marker_id=marker_filter,
                 sample_filter=sample_filter,
                 min_frequency=min_freq,
                 max_frequency=max_freq,
@@ -629,9 +643,9 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
                 db,
                 species_id=species_id,
                 chromosome_id=chromosome_id,
-                search_name=None,
+                # Match the full Clone ID (chr1.1_000309952|Alt_0002), not just its locus.
+                search_name=marker_filter,
                 search_sequence=seq_search,
-                marker_id=marker_filter,
                 sample_filter=sample_filter,
                 min_frequency=min_freq,
                 max_frequency=max_freq,
@@ -689,7 +703,8 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
      Output('navigate-to-haplotype-store', 'data', allow_duplicate=True),
      Output('samples-data-store', 'data'),
      Output('toggle-samples', 'children'),
-     Output('samples-section-wrapper', 'style')],
+     Output('samples-section-wrapper', 'style'),
+     Output('samples-download-name-store', 'data')],
     Input({'type': 'haplotype-list-item', 'index': dash.ALL}, 'n_clicks'),
     Input('navigate-to-haplotype-store', 'data'),
     Input('selected-species-store', 'data'),
@@ -723,10 +738,10 @@ def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details
         if current_details:
             if isinstance(current_details, str):
                 if "Select a haplotype" not in current_details:
-                    return no_update, no_update, no_update, no_update, no_update
+                    return no_update, no_update, no_update, no_update, no_update, no_update
             else:
                 # It's a Div component, preserve it
-                return no_update, no_update, no_update, no_update, no_update
+                return no_update, no_update, no_update, no_update, no_update, no_update
         return (
             html.Div("Select a microhaplotype result to view details", className="text-muted"),
             no_update,
@@ -737,6 +752,7 @@ def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details
                 html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
             ],
             {'display': 'none'},
+            None,
         )
 
     try:
@@ -755,6 +771,7 @@ def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details
                         html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
                     ],
                     {'display': 'none'},
+                    None,
                 )
 
             # Get samples and projects
@@ -797,6 +814,7 @@ def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details
 
             # Create samples table data
             samples_table_data = create_samples_table(samples, presence_samples, presence_stats, haplotype_name)
+            samples_download_name = _samples_download_name(db, haplotype)
             collaborators_table_data = build_collaborator_rows(projects, contacts_data)
             collaborators_count = len(collaborators_table_data)
             samples_count = len(samples_table_data)
@@ -934,7 +952,7 @@ def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details
             html.I(className="fas fa-leaf me-2"),
             samples_button_label,
             html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
-        ], {'display': 'block'}
+        ], {'display': 'block'}, samples_download_name
 
     except Exception as e:
         return (
@@ -947,6 +965,7 @@ def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details
                 html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
             ],
             {'display': 'none'},
+            None,
         )
 
 
@@ -1137,6 +1156,42 @@ def update_samples_table(samples_data, search_filter, current_page):
         {'display': 'none'},
         1
     )
+
+
+def _samples_download_name(db, haplotype):
+    """File name for the saved sample list: <microhaplotype>_samples_<common name>."""
+    # Names such as chr1.1_000194324|Alt_0002 hold characters some systems
+    # don't allow in file names.
+    haplotype_name = re.sub(r'[\\/:*?"<>|\s]+', '_', haplotype.get('haplotype_name') or '')
+    base = f"{haplotype_name or 'microhaplotype'}_samples"
+    rows = db.execute_query(
+        "SELECT name, common_name FROM species WHERE id = ?",
+        (haplotype.get('species_id'),),
+    )
+    species = rows[0] if rows else {}
+    species_name = (species.get('common_name') or species.get('name') or '').strip()
+    slug = re.sub(r'[^a-z0-9]+', '_', species_name.lower()).strip('_')
+    return f"{base}_{slug}" if slug else base
+
+
+@app.callback(
+    Output('samples-download', 'data'),
+    Input('samples-download-btn', 'n_clicks'),
+    State('samples-data-store', 'data'),
+    State('samples-download-name-store', 'data'),
+    prevent_initial_call=True
+)
+def download_samples_csv(n_clicks, samples_data, download_name):
+    """Save every sample for the selected microhaplotype as a CSV."""
+    if not n_clicks or not samples_data:
+        return no_update
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(['Sample Name', 'Owners'])
+    for row in samples_data:
+        writer.writerow([row.get('Sample Name', ''), row.get('Owners', '')])
+    filename = f"{download_name or 'microhaplotype_samples'}.csv"
+    return dict(content=buffer.getvalue(), filename=filename, type='text/csv')
 
 
 def create_samples_table(samples, presence_samples=None, presence_stats=None, haplotype_name=None):

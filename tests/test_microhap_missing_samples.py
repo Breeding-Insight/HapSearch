@@ -13,6 +13,9 @@ class FakeDb:
     def shared_connection(self):
         return nullcontext()
 
+    def execute_query(self, query, params=()):
+        return []
+
 
 class MicrohapMissingSampleTests(unittest.TestCase):
     def _import_explorer_or_skip(self):
@@ -262,7 +265,7 @@ class MicrohapMissingSampleTests(unittest.TestCase):
         ), patch.object(
             explorer, "get_species_sample_count", return_value=0
         ), patch.object(explorer, "ctx", fake_ctx):
-            detail, _, _, toggle_children, _ = explorer.show_haplotype_details(
+            detail, _, _, toggle_children, _, _ = explorer.show_haplotype_details(
                 n_clicks=[1],
                 navigate_data=None,
                 _species_id=1,

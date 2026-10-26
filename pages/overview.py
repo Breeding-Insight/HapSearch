@@ -56,6 +56,7 @@ HIGHLIGHT_PERCENTILE = 99
 PLOT_STATIC_CONFIG = {"displayModeBar": False}
 ACCUMULATION_PROJECTION_SAMPLES = 4000
 ACCUMULATION_MAX_PLOT_POINTS = 1200
+ACCUMULATION_EXPORT_FILENAME = "microhaplotype_accumulation_curve"
 
 
 def _overview_loading(children, class_name="overview-loading-region"):
@@ -268,7 +269,7 @@ database_layout = dbc.Container([
                     _plot_export_controls(
                         "accumulation",
                         graph_id="overview-accumulation-chart",
-                        filename="microhaplotype_accumulation_curve",
+                        filename=ACCUMULATION_EXPORT_FILENAME,
                         default_width=10,
                         default_height=6,
                     ),
@@ -1077,6 +1078,29 @@ def update_accumulation_curve(species_id, n_clicks):
 
     except Exception as e:
         return _empty_accumulation_figure(f"Error: {str(e)}")
+
+
+@app.callback(
+    Output('overview-accumulation-save-image-btn', 'data-overview-export-filename'),
+    Input('selected-species-store', 'data'),
+)
+def update_accumulation_export_filename(species_id):
+    """Add the species' common name to the saved accumulation curve's file name."""
+    if not species_id:
+        return ACCUMULATION_EXPORT_FILENAME
+
+    try:
+        rows = DatabaseManager().execute_query(
+            "SELECT name, common_name FROM species WHERE id = ?",
+            (species_id,),
+        )
+    except Exception:
+        return ACCUMULATION_EXPORT_FILENAME
+
+    species = rows[0] if rows else {}
+    species_name = (species.get('common_name') or species.get('name') or '').strip()
+    slug = re.sub(r'[^a-z0-9]+', '_', species_name.lower()).strip('_')
+    return f"{ACCUMULATION_EXPORT_FILENAME}_{slug}" if slug else ACCUMULATION_EXPORT_FILENAME
 
 
 @app.callback(

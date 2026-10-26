@@ -634,8 +634,12 @@ def get_markers_paginated(db: DatabaseManager, species_id: int = None,
         params.append(chromosome_id)
 
     if search_marker_id:
-        query += " AND mk.marker_id LIKE ?"
-        params.append(f"%{search_marker_id}%")
+        # Match the locus ID or any of its Clone IDs (chr1.1_000309952|Alt_0002).
+        query += (
+            " AND (mk.marker_id LIKE ? OR EXISTS (SELECT 1 FROM microhaplotypes m3"
+            " WHERE m3.marker_id = mk.id AND m3.haplotype_name LIKE ?))"
+        )
+        params.extend([f"%{search_marker_id}%", f"%{search_marker_id}%"])
 
     if search_sequence:
         # Filter markers that have at least one microhaplotype containing the exact search sequence as a substring
@@ -1776,7 +1780,8 @@ def get_microhaplotype_project_sharing_data(
             group_id = program_group_id(institution, location)
             program_group_ids_by_project[project_id].append(group_id)
             if group_id not in groups_by_id:
-                label = institution if not location else f"{institution} ({location})"
+                # Name programs by location alone; fall back to the institution.
+                label = location or institution
                 groups_by_id[group_id] = {
                     "group_id": group_id,
                     "label": label,

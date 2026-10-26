@@ -77,11 +77,11 @@ def create_single_view_layout():
                         ], id='marker-chromosome-container'),
 
                         html.Div([
-                            html.Label("Allele ID:", className="fw-bold small", id='marker-search-label'),
+                            html.Label("Clone ID:", className="fw-bold small", id='marker-search-label'),
                             dbc.Input(
                                 id='marker-search-input',
                                 type='text',
-                                placeholder='Search allele ID...',
+                                placeholder='Search clone ID...',
                                 debounce=True,
                                 className="mb-3"
                             )
@@ -1095,7 +1095,11 @@ def create_variant_table(variants):
     prevent_initial_call=True
 )
 def align_marker_sequences(marker_id):
-    """Automatically align marker sequences using CLUSTAL Omega when marker is selected"""
+    """Align a marker's alleles when it is selected.
+
+    Each allele is aligned to the Ref allele so its variants are relative to
+    the reference; CLUSTAL Omega is the fallback for loci without one.
+    """
     import time as _time
     if not marker_id:
         return {'status': 'original', 'marker_id': None, 'sequences': None, 'variants': None}
@@ -1108,6 +1112,7 @@ def align_marker_sequences(marker_id):
         with db.shared_connection():
             haplotypes = get_microhaplotypes_for_marker(db, marker_id)
             marker = get_marker_details(db, marker_id)
+            bottom_strand = is_bottom_locus(db, marker_id)
 
         print(f"[ALIGN] {marker_id}: {len(haplotypes)} haplotypes, "
               f"seq lengths={[len(h['haplotype_sequence']) for h in haplotypes[:5]]}")
@@ -1123,7 +1128,18 @@ def align_marker_sequences(marker_id):
             seq_records.append(record)
 
         aligner = MSAAligner(algorithm='clustal')
-        alignment = aligner.align_sequences(seq_records)
+        reference_id = next(
+            (r.id for r in seq_records if 'Ref_' in r.id and 'RefMatch' not in r.id),
+            None,
+        )
+        if reference_id:
+            # Indels go to the lowest genome coordinate of their repeat run
+            # (VCF convention): the end of a bottom-strand amplicon, the start
+            # of a top-strand one.
+            alignment = aligner.align_to_reference(
+                seq_records, reference_id, gaps_toward_end=bottom_strand)
+        else:
+            alignment = aligner.align_sequences(seq_records)
 
         annotator = VariantAnnotator(min_frequency=0.1)
         aligned_variants_raw = annotator.annotate_alignment(alignment)
@@ -1303,7 +1319,7 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
             )
             loading_status = dbc.Alert([
                 html.I(className="fas fa-spinner fa-spin me-2"),
-                "Running CLUSTAL Omega alignment..."
+                "Aligning sequences..."
             ], color="secondary", className="mt-2")
             return loading_fig, loading_status, [html.I(className="fas fa-dna me-2"), "Show Aligned"]
 
@@ -1318,11 +1334,7 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
             haplotypes = alignment_data['sequences']
             variants = alignment_data['variants']
             is_aligned = True
-            num_variants = len(variants)
-            status_message = dbc.Alert([
-                html.I(className="fas fa-check-circle me-2"),
-                f"Sequences aligned using CLUSTAL Omega ({num_variants} variants detected)"
-            ], color="success", className="mt-2", dismissable=True)
+            status_message = html.Div()
             button_text = [html.I(className="fas fa-undo me-2"), "Show Original (Unaligned)"]
         else:
             with db.shared_connection():
