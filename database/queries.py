@@ -1776,7 +1776,8 @@ def get_microhaplotype_project_sharing_data(
             group_id = program_group_id(institution, location)
             program_group_ids_by_project[project_id].append(group_id)
             if group_id not in groups_by_id:
-                label = institution if not location else f"{institution} ({location})"
+                # Name programs by location alone; fall back to the institution.
+                label = location or institution
                 groups_by_id[group_id] = {
                     "group_id": group_id,
                     "label": label,
