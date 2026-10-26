@@ -8,6 +8,7 @@ import numpy as np
 from collections import Counter
 import sys
 import os
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -775,7 +776,6 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
 
     target_snp_x_pos = None
-    target_snp_absolute_x_pos = None
     if target_snp_position is not None:
         if is_aligned:
             if target_snp_position < len(x_values):
@@ -798,12 +798,10 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         else:
             x_pos = marker['position_start'] + target_snp_position
 
-        target_snp_absolute_x_pos = x_pos
         target_snp_x_pos = x_pos
         x_values = relative_positions(x_values, target_snp_x_pos, is_bottom_strand)
         x_title = 'Relative Position to Target SNP'
         hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
-        target_snp_x_pos = 0
 
     # For unaligned sequences, ensure zmin and zmax are set correctly for single color
     if not is_aligned and n_colors == 1:
@@ -813,13 +811,27 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         zmin_val = 0
         zmax_val = n_colors - 1 if n_colors > 1 else 1
     
+    # Draw one equal-width cell per alignment column. Columns are labelled by
+    # their reference position; an insertion column has none (its x value
+    # falls between two positions), so it gets no tick and reads "insertion".
+    column_positions = x_values
+    column_of_position = {}
+    for column, pos in enumerate(column_positions):
+        if pos == int(pos):
+            column_of_position.setdefault(int(pos), column)
+    position_labels = [
+        f'{int(pos):,}' if pos == int(pos) else 'insertion' for pos in column_positions
+    ]
+    hover_template = re.sub(r'%\{x[^}]*\}', '%{customdata}', hover_template)
+
     # Keep unaligned sequence rows continuous so bases remain easy to read.
     x_cell_gap = 0 if not is_aligned else 0.5
     y_cell_gap = 2.0 if not is_aligned else 0.5
     
     fig = go.Figure(data=go.Heatmap(
         z=numeric_matrix,
-        x=x_values,
+        x=list(range(len(column_positions))),
+        customdata=[position_labels] * len(numeric_matrix),
         y=[f"{name.split('|')[-1]}" for name in haplotype_names],
         colorscale=colorscale,
         zmin=zmin_val,
@@ -832,69 +844,8 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         xgap=x_cell_gap,
         ygap=y_cell_gap
     ))
-    snp_positions = set()
-    for variant in variants:
-        variant_type = variant.get('variant_type', '').upper()
-        if 'SNP' in variant_type and 'INDEL' not in variant_type:
-            if is_aligned:
-                snp_pos = variant.get('genomic_position')
-                if snp_pos is None:
-                    align_pos = variant.get('position', 0)
-                    if ref_sequence and align_pos < len(ref_sequence):
-                        genomic_offset = 0
-                        for i in range(min(align_pos + 1, len(ref_sequence))):
-                            if ref_sequence[i].upper() not in ['-', 'N']:
-                                if i == align_pos:
-                                    snp_pos = marker['position_start'] + genomic_offset
-                                    break
-                                genomic_offset += 1
-                        if snp_pos is None:
-                            genomic_offset = sum(1 for j in range(align_pos) 
-                                               if j < len(ref_sequence) and ref_sequence[j].upper() not in ['-', 'N'])
-                            snp_pos = marker['position_start'] + genomic_offset
-            else:
-                snp_pos = variant.get('position')
-                if snp_pos and snp_pos < marker['position_start']:
-                    snp_pos = marker['position_start'] + snp_pos
-            
-            if snp_pos is not None and target_snp_absolute_x_pos is not None:
-                snp_pos = relative_position(snp_pos, target_snp_absolute_x_pos, is_bottom_strand)
-            
-            if snp_pos is not None:
-                snp_positions.add(int(snp_pos))
-    indel_positions = set()
-    for variant in variants:
-        variant_type = variant.get('variant_type', '').upper()
-        if 'INDEL' in variant_type or variant_type == 'INDEL':
-            if is_aligned:
-                indel_pos = variant.get('genomic_position')
-                if indel_pos is None:
-                    align_pos = variant.get('position', 0)
-                    align_pos_0based = variant.get('position_0based', align_pos - 1)
-                    if ref_sequence and align_pos_0based < len(ref_sequence):
-                        genomic_offset = 0
-                        for i in range(min(align_pos_0based + 1, len(ref_sequence))):
-                            if ref_sequence[i].upper() not in ['-', 'N']:
-                                if i == align_pos_0based:
-                                    indel_pos = marker['position_start'] + genomic_offset
-                                    break
-                                genomic_offset += 1
-                        if indel_pos is None:
-                            genomic_offset = sum(1 for j in range(align_pos_0based) 
-                                               if j < len(ref_sequence) and ref_sequence[j].upper() not in ['-', 'N'])
-                            indel_pos = marker['position_start'] + genomic_offset
-            else:
-                indel_pos = variant.get('position')
-                if indel_pos and indel_pos < marker['position_start']:
-                    indel_pos = marker['position_start'] + indel_pos
-            
-            if indel_pos is not None and target_snp_absolute_x_pos is not None:
-                indel_pos = relative_position(indel_pos, target_snp_absolute_x_pos, is_bottom_strand)
-            
-            if indel_pos is not None:
-                indel_positions.add(int(indel_pos))
-
-    xaxis_autorange = 'reversed' if target_snp_absolute_x_pos is not None and is_bottom_strand else True
+    # Columns already run in display order (bottom-strand positions descend).
+    xaxis_autorange = True
     integer_positions = []
     if x_values:
         integer_positions = sorted(set(int(pos) for pos in x_values if pos == int(pos)))
@@ -905,7 +856,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             
             xaxis_config = dict(
                 tickmode='array',
-                tickvals=integer_positions,
+                tickvals=[column_of_position[pos] for pos in integer_positions],
                 ticktext=tick_texts,
                 tickangle=-90,
                 showgrid=False,
@@ -959,57 +910,44 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         yaxis_range = [-0.5, len(haplotypes) - 0.5 + top_extension]
 
     annotations = []
-    # Only add variant markers for aligned sequences
+    # Only add variant markers for aligned sequences. Variants carry their
+    # alignment column, which is also the plot's x, so insertion columns
+    # (which have no reference position) are marked too.
     if is_aligned:
-        if snp_positions and x_values and integer_positions:
-            for snp_pos in snp_positions:
-                if target_snp_x_pos is not None and int(snp_pos) == int(target_snp_x_pos):
-                    continue
-                if snp_pos >= min_x and snp_pos <= max_x and snp_pos in integer_positions:
-                    annotations.append(dict(
-                        x=snp_pos,
-                        y=top_marker_y,
-                        text='●',
-                        showarrow=False,
-                        xref='x',
-                        yref='y',
-                        xanchor='center',
-                        yanchor='bottom',
-                        font=dict(size=14, color='#FF4500', family='Arial, sans-serif'),
-                        opacity=1.0
-                    ))
-        
-        if indel_positions and x_values and integer_positions:
-            for indel_pos in indel_positions:
-                if indel_pos >= min_x and indel_pos <= max_x and indel_pos in integer_positions:
-                    annotations.append(dict(
-                        x=indel_pos,
-                        y=top_marker_y,
-                        text='◆',
-                        showarrow=False,
-                        xref='x',
-                        yref='y',
-                        xanchor='center',
-                        yanchor='bottom',
-                        font=dict(size=14, color='#2196F3', family='Arial, sans-serif'),
-                        opacity=1.0
-                    ))
-        
-        if target_snp_x_pos is not None and x_values and integer_positions:
-            if target_snp_x_pos >= min_x and target_snp_x_pos <= max_x and int(target_snp_x_pos) in integer_positions:
-                annotations.append(dict(
-                    x=target_snp_x_pos,
-                    y=top_marker_y,
-                    text='⁑',
-                    showarrow=False,
-                    xref='x',
-                    yref='y',
-                    xanchor='center',
-                    yanchor='bottom',
-                    font=dict(size=18, color='#7B2CBF', family='Arial, sans-serif'),
-                    opacity=1.0
-                ))
+        def _marker(column, text, size, color):
+            return dict(
+                x=column,
+                y=top_marker_y,
+                text=text,
+                showarrow=False,
+                xref='x',
+                yref='y',
+                xanchor='center',
+                yanchor='bottom',
+                font=dict(size=size, color=color, family='Arial, sans-serif'),
+                opacity=1.0,
+            )
 
+        n_columns = len(column_positions)
+        snp_columns = set()
+        indel_columns = set()
+        for variant in variants:
+            column = variant.get('position')
+            if column is None or not 0 <= column < n_columns:
+                continue
+            variant_type = variant.get('variant_type', '').upper()
+            if 'INDEL' in variant_type:
+                indel_columns.add(column)
+            elif 'SNP' in variant_type:
+                snp_columns.add(column)
+        if target_snp_position is not None:
+            snp_columns.discard(target_snp_position)
+            indel_columns.discard(target_snp_position)
+
+        annotations.extend(_marker(c, '●', 14, '#FF4500') for c in sorted(snp_columns))
+        annotations.extend(_marker(c, '◆', 14, '#2196F3') for c in sorted(indel_columns))
+        if target_snp_position is not None and target_snp_position < n_columns:
+            annotations.append(_marker(target_snp_position, '⁑', 18, '#7B2CBF'))
     all_annotations = annotations
 
     fig.update_layout(
