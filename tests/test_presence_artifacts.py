@@ -1,10 +1,12 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from database.db_manager import DatabaseManager
 import numpy as np
 
+import config
 from database.presence_artifacts import (
     _pack_entity_rows,
     clear_presence_cache,
@@ -12,7 +14,9 @@ from database.presence_artifacts import (
     counts_from_matrix,
     entity_presence_matrix,
     entity_ids_for_microhaplotype,
+    entity_row,
     load_presence_artifact,
+    microhaplotype_column,
     microhaplotype_ids_for_entity,
     upsert_presence_summary,
     write_presence_artifact,
@@ -78,6 +82,46 @@ class PresenceArtifactTests(unittest.TestCase):
         second = load_presence_artifact(self.db, metadata["id"])
 
         self.assertIs(first, second)
+
+    def test_lookups_work_on_unsorted_ids(self):
+        metadata = self._write(
+            [(30, 103), (10, 101), (20, 102)],
+            [30, 10, 20],
+            [103, 101, 102],
+        )
+        artifact = load_presence_artifact(self.db, metadata["id"])
+
+        self.assertEqual(entity_row(artifact, 101), 1)
+        self.assertIsNone(entity_row(artifact, 100))
+        self.assertIsNone(entity_row(artifact, 999))
+        self.assertEqual(microhaplotype_column(artifact, 20), 2)
+        self.assertEqual(microhaplotype_ids_for_entity(artifact, 103), [30])
+        self.assertEqual(entity_ids_for_microhaplotype(artifact, 10), [101])
+
+    def test_cache_drops_least_recently_used_matrices_past_its_size_limit(self):
+        microhaplotype_ids = list(range(1, 8001))
+        ids = [
+            self._write([(1, 101)], microhaplotype_ids, [101])["id"]
+            for _ in range(3)
+        ]
+        one_matrix_mb = 8000 * 8 / (1024 * 1024)
+
+        with patch.object(config, "PRESENCE_CACHE_MAX_MB", one_matrix_mb * 2.5):
+            first = load_presence_artifact(self.db, ids[0])
+            load_presence_artifact(self.db, ids[1])
+            load_presence_artifact(self.db, ids[0])  # now the most recently used
+            load_presence_artifact(self.db, ids[2])  # evicts ids[1]
+
+            self.assertIs(load_presence_artifact(self.db, ids[0]), first)
+            second_reloaded = load_presence_artifact(self.db, ids[1])
+            self.assertEqual(microhaplotype_ids_for_entity(second_reloaded, 101), [1])
+
+    def test_cache_keeps_a_matrix_larger_than_its_size_limit(self):
+        metadata = self._write([(10, 101)], [10], [101])
+
+        with patch.object(config, "PRESENCE_CACHE_MAX_MB", 0):
+            first = load_presence_artifact(self.db, metadata["id"])
+            self.assertIs(load_presence_artifact(self.db, metadata["id"]), first)
 
     def test_rejects_legacy_lookup_entity_types(self):
         with self.assertRaises(ValueError):

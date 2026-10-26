@@ -133,8 +133,12 @@ created.
 - container port: `8080` (the image honors the injected `PORT`)
 - minimum instances: `0`, with startup CPU boost
 - request-based billing (`--cpu-throttling`)
-- CPU `1`, memory `1 GiB`: each of the two Gunicorn workers peaks around 220 MB
-  with every presence bitmap cached (measured on a Mac with the current data)
+- CPU `1`, memory `1 GiB`: each of the two Gunicorn workers uses about 135 MB for
+  the app itself plus at most `PRESENCE_CACHE_MAX_MB` (default 100) of cached
+  presence bitmaps; all of alfalfa v055 is about 22 MB (measured on a Mac). Past
+  the limit, the least recently used bitmaps are re-read from SQLite when needed,
+  so adding species does not grow memory. Raise it with `--update-env-vars` if
+  Cloud Run's memory metric has room and cache misses slow pages down.
 - public ingress; access to `/app/` is controlled by ORCID sign-in
 - `GET /health` answers `200` without touching the database, for the landing page's
   wake-up script; `/robots.txt` disallows all crawling

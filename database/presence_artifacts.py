@@ -26,6 +26,7 @@ DEFAULT_COMPRESSION = "sqlite_packbits"
 ENTITY_TYPES = ("sample", "project")
 
 _cache: "OrderedDict[Tuple[str, int, int], Dict[str, object]]" = OrderedDict()
+_cache_bytes = 0
 _cache_lock = threading.Lock()
 
 
@@ -218,16 +219,65 @@ def _cache_key(db, artifact_id: int) -> Tuple[str, int, int]:
 
 def clear_presence_cache() -> None:
     """Drop all cached matrices (used by tests and after re-imports)."""
+    global _cache_bytes
     with _cache_lock:
         _cache.clear()
+        _cache_bytes = 0
+
+
+def _sorted_lookup(ids: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Sorted ids and their original positions, or (None, None) if already sorted.
+
+    Binary search over these arrays costs 12 bytes per id, where a dict of
+    id -> position costs around ten times that.
+    """
+    if len(ids) < 2 or bool(np.all(ids[1:] > ids[:-1])):
+        return None, None
+    order = np.argsort(ids, kind="stable")
+    return ids[order], order.astype(np.int32)
+
+
+def _find(ids: np.ndarray, sorted_ids: Optional[np.ndarray], order: Optional[np.ndarray], value: int) -> Optional[int]:
+    axis = ids if sorted_ids is None else sorted_ids
+    pos = int(np.searchsorted(axis, value))
+    if pos >= len(axis) or int(axis[pos]) != value:
+        return None
+    return pos if order is None else int(order[pos])
+
+
+def entity_row(artifact: Dict[str, object], entity_id: int) -> Optional[int]:
+    """Bitmap row of a sample/project in an artifact, or None when it isn't there."""
+    return _find(
+        artifact["entity_ids"],
+        artifact["entity_sorted_ids"],
+        artifact["entity_order"],
+        int(entity_id),
+    )
+
+
+def microhaplotype_column(artifact: Dict[str, object], microhaplotype_id: int) -> Optional[int]:
+    """Bit column of a microhaplotype in an artifact, or None when it isn't there."""
+    return _find(
+        artifact["microhaplotype_ids"],
+        artifact["microhaplotype_sorted_ids"],
+        artifact["microhaplotype_order"],
+        int(microhaplotype_id),
+    )
+
+
+def _artifact_nbytes(artifact: Dict[str, object]) -> int:
+    return sum(value.nbytes for value in artifact.values() if isinstance(value, np.ndarray))
 
 
 def load_presence_artifact(db, artifact_id: int) -> Dict[str, object]:
     """Return a decoded presence matrix, cached per worker process.
 
     Artifact rows are immutable once written (re-imports create new IDs), so
-    a cached matrix never goes stale.
+    a cached matrix never goes stale. The cache holds at most
+    PRESENCE_CACHE_MAX_MB of arrays, dropping the least recently used matrices
+    first, so memory stays flat however many species are loaded.
     """
+    global _cache_bytes
     key = _cache_key(db, artifact_id)
     with _cache_lock:
         cached = _cache.get(key)
@@ -268,27 +318,31 @@ def load_presence_artifact(db, artifact_id: int) -> Dict[str, object]:
     else:
         packed_presence = np.zeros((0, row_bytes), dtype=np.uint8)
 
+    entity_sorted_ids, entity_order = _sorted_lookup(entity_ids)
+    microhaplotype_sorted_ids, microhaplotype_order = _sorted_lookup(microhaplotype_ids)
     artifact = {
         "id": int(artifact_id),
         "entity_ids": entity_ids,
-        "entity_index": {
-            int(entity_id): index
-            for index, entity_id in enumerate(entity_ids.tolist())
-        },
+        "entity_sorted_ids": entity_sorted_ids,
+        "entity_order": entity_order,
         "microhaplotype_ids": microhaplotype_ids,
-        "microhaplotype_index": {
-            int(mid): index
-            for index, mid in enumerate(microhaplotype_ids.tolist())
-        },
+        "microhaplotype_sorted_ids": microhaplotype_sorted_ids,
+        "microhaplotype_order": microhaplotype_order,
         "packed_presence": packed_presence,
         "microhaplotype_count": microhaplotype_count,
     }
 
+    max_bytes = config.PRESENCE_CACHE_MAX_MB * 1024 * 1024
     with _cache_lock:
-        _cache[key] = artifact
+        if key not in _cache:
+            _cache[key] = artifact
+            _cache_bytes += _artifact_nbytes(artifact)
         _cache.move_to_end(key)
-        while len(_cache) > max(1, config.PRESENCE_CACHE_MAX_ARTIFACTS):
-            _cache.popitem(last=False)
+        # Always keep the newest matrix, even if it alone exceeds the budget.
+        while _cache_bytes > max_bytes and len(_cache) > 1:
+            _, evicted = _cache.popitem(last=False)
+            _cache_bytes -= _artifact_nbytes(evicted)
+        artifact = _cache[key]
     return artifact
 
 
@@ -297,7 +351,7 @@ def microhaplotype_ids_for_entity(
     entity_id: int,
 ) -> List[int]:
     """Return microhaplotype IDs present for one sample/project."""
-    row_idx = artifact["entity_index"].get(int(entity_id))
+    row_idx = entity_row(artifact, entity_id)
     if row_idx is None:
         return []
 
@@ -314,7 +368,7 @@ def entity_ids_for_microhaplotype(
     microhaplotype_id: int,
 ) -> List[int]:
     """Return sample/project IDs that carry one microhaplotype."""
-    col_idx = artifact["microhaplotype_index"].get(int(microhaplotype_id))
+    col_idx = microhaplotype_column(artifact, microhaplotype_id)
     if col_idx is None:
         return []
 

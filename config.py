@@ -88,9 +88,11 @@ FASTA_DIR = os.path.join(DATA_DIR, 'fasta')
 MARKERS_DIR = os.path.join(DATA_DIR, 'markers')
 SAMPLES_DIR = os.path.join(DATA_DIR, 'samples')
 PROJECTS_DIR = os.path.join(DATA_DIR, 'projects')
-# Maximum presence matrices each worker keeps decoded in memory. Each one is a
-# packed bitmap (roughly entities x microhaplotypes / 8 bytes).
-PRESENCE_CACHE_MAX_ARTIFACTS = int(os.getenv('PRESENCE_CACHE_MAX_ARTIFACTS', '256'))
+# Megabytes of decoded presence matrices each worker keeps in memory. Each one
+# is a packed bitmap (roughly entities x microhaplotypes / 8 bytes); all of
+# alfalfa v055 is about 25 MB. Past the limit, the least recently used
+# matrices are dropped and re-read from SQLite when next needed.
+PRESENCE_CACHE_MAX_MB = float(os.getenv('PRESENCE_CACHE_MAX_MB', '100'))
 
 # Dropbox configuration (for metadata sync)
 DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '')

@@ -8,6 +8,7 @@ import numpy as np
 from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
     entity_ids_for_microhaplotype,
+    entity_row,
     load_presence_artifact,
     microhaplotype_ids_for_entity,
 )
@@ -1527,7 +1528,7 @@ def get_microhaplotype_accumulation_data(
                 else loaded_project_artifacts
             )
             for artifact in artifacts:
-                row_idx = artifact["entity_index"].get(entity_id)
+                row_idx = entity_row(artifact, entity_id)
                 if row_idx is not None:
                     np.bitwise_or(
                         ordered_packed_rows[ordered_index],
@@ -1575,7 +1576,7 @@ def get_microhaplotype_accumulation_data(
             else loaded_project_artifacts
         )
         for artifact in artifacts:
-            row_idx = artifact["entity_index"].get(entity_id)
+            row_idx = entity_row(artifact, entity_id)
             if row_idx is None:
                 continue
             bits = np.unpackbits(
