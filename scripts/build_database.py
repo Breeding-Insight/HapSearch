@@ -38,6 +38,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -752,6 +753,22 @@ def _repo_url(repo: str) -> str:
     return f"https://github.com/{repo}.git"
 
 
+# GitHub can reject a just-issued connection token for a few seconds, answering
+# "Repository not found" as if the repository were private to it.
+FETCH_RETRY_DELAYS = (2, 4, 8, 16)
+
+
+def _fetch_with_retry(args: List[str], cwd: str, token: Optional[str]) -> str:
+    for delay in (*FETCH_RETRY_DELAYS, None):
+        try:
+            return _git(args, cwd, token)
+        except BuildError as exc:
+            if delay is None or "not found" not in str(exc).lower():
+                raise
+            _log(f"  GitHub did not accept the fetch yet; retrying in {delay}s")
+            time.sleep(delay)
+
+
 def checkout_source(source: DataSource, cache_dir: str) -> DataSource:
     """Fetch one data repository at its ref into cache_dir/sources/<name>."""
     import shutil
@@ -767,7 +784,7 @@ def checkout_source(source: DataSource, cache_dir: str) -> DataSource:
     _log(f"Fetching {source.name}: {source.repo} at {source.ref}")
     _git(["init", "-q"], dest, token)
     _git(["remote", "add", "origin", _repo_url(source.repo)], dest, token)
-    _git(["fetch", "-q", "--depth", "1", "origin", source.ref], dest, token)
+    _fetch_with_retry(["fetch", "-q", "--depth", "1", "origin", source.ref], dest, token)
     _git(["checkout", "-q", "FETCH_HEAD"], dest, token)
     source.path = dest
     source.commit = _git(["rev-parse", "HEAD"], dest, token)
