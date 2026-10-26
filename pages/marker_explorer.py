@@ -77,11 +77,11 @@ def create_single_view_layout():
                         ], id='marker-chromosome-container'),
 
                         html.Div([
-                            html.Label("Allele ID:", className="fw-bold small", id='marker-search-label'),
+                            html.Label("Clone ID:", className="fw-bold small", id='marker-search-label'),
                             dbc.Input(
                                 id='marker-search-input',
                                 type='text',
-                                placeholder='Search allele ID...',
+                                placeholder='Search clone ID...',
                                 debounce=True,
                                 className="mb-3"
                             )

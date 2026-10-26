@@ -204,13 +204,13 @@ layout = dbc.Container([
                             )
                         ], id='haplotype-chromosome-container'),
 
-                        # Allele ID filter
+                        # Clone ID filter
                         html.Div([
-                            html.Label("Allele ID:", className="fw-bold small", id='haplotype-marker-label'),
+                            html.Label("Clone ID:", className="fw-bold small", id='haplotype-marker-label'),
                             dbc.Input(
                                 id='haplotype-marker-filter',
                                 type='text',
-                                placeholder='Search allele ID...',
+                                placeholder='Search clone ID...',
                                 debounce=True,
                                 className="mb-3"
                             )
@@ -567,9 +567,9 @@ def update_haplotype_page(
                 db,
                 species_id=species_id,
                 chromosome_id=chromosome_id,
-                search_name=None,
+                # Match the full Clone ID (chr1.1_000309952|Alt_0002), not just its locus.
+                search_name=marker_filter,
                 search_sequence=seq_search,
-                marker_id=marker_filter,
                 sample_filter=sample_filter,
                 min_frequency=min_freq,
                 max_frequency=max_freq,
@@ -643,9 +643,9 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
                 db,
                 species_id=species_id,
                 chromosome_id=chromosome_id,
-                search_name=None,
+                # Match the full Clone ID (chr1.1_000309952|Alt_0002), not just its locus.
+                search_name=marker_filter,
                 search_sequence=seq_search,
-                marker_id=marker_filter,
                 sample_filter=sample_filter,
                 min_frequency=min_freq,
                 max_frequency=max_freq,

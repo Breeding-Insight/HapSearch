@@ -634,8 +634,12 @@ def get_markers_paginated(db: DatabaseManager, species_id: int = None,
         params.append(chromosome_id)
 
     if search_marker_id:
-        query += " AND mk.marker_id LIKE ?"
-        params.append(f"%{search_marker_id}%")
+        # Match the locus ID or any of its Clone IDs (chr1.1_000309952|Alt_0002).
+        query += (
+            " AND (mk.marker_id LIKE ? OR EXISTS (SELECT 1 FROM microhaplotypes m3"
+            " WHERE m3.marker_id = mk.id AND m3.haplotype_name LIKE ?))"
+        )
+        params.extend([f"%{search_marker_id}%", f"%{search_marker_id}%"])
 
     if search_sequence:
         # Filter markers that have at least one microhaplotype containing the exact search sequence as a substring
