@@ -39,7 +39,7 @@ from alignment.coordinates import (
     relative_position,
     relative_positions,
 )
-from alignment.aligner import MSAAligner, reverse_complement_row
+from alignment.aligner import merge_reference_alignments, reverse_complement_row
 from alignment.variant_annotator import VariantAnnotator
 from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
@@ -1037,7 +1037,8 @@ def align_marker_sequences(marker_id):
     """Align a marker's microhaplotypes when it is selected.
 
     Each microhaplotype shows BIGr's alignment to the locus's Ref_0001, stored
-    by the database build; CLUSTAL Omega is the fallback for loci without a Ref.
+    by the database build. A locus without a Ref_0001 is shown unaligned, as
+    BIGr skips it too.
     """
     import time as _time
     if not marker_id:
@@ -1067,34 +1068,38 @@ def align_marker_sequences(marker_id):
             record = SeqRecord(seq, id=hap['haplotype_name'], description="")
             seq_records.append(record)
 
-        aligner = MSAAligner(algorithm='clustal')
         reference = next((r for r in seq_records if r.id.endswith('|Ref_0001')), None)
-        if reference:
-            # Each microhaplotype's alignment to Ref_0001 is BIGr's own,
-            # computed in R by the database build (scripts/align_microhaplotypes.py).
-            stored = {row['haplotype_name']: row for row in stored_alignments}
-            missing = [r.id for r in seq_records if r is not reference and r.id not in stored]
-            if missing:
-                raise ValueError(
-                    "this database has no BIGr alignment for this locus. Rebuild the "
-                    "database, or run scripts/align_microhaplotypes.py on it."
-                )
-            pairwise = []
-            for record in seq_records:
-                if record is reference:
-                    continue
-                ref_row = stored[record.id]['aligned_reference']
-                seq_row = stored[record.id]['aligned_sequence']
-                if bottom_strand:
-                    # BIGr aligns bottom-strand loci reverse complemented; turn
-                    # the rows back to the amplicon orientation shown here.
-                    ref_row = reverse_complement_row(ref_row)
-                    seq_row = reverse_complement_row(seq_row)
-                pairwise.append((record.id, ref_row, seq_row))
-            alignment = aligner.merge_reference_alignments(
-                reference, pairwise, pad_toward_start=bottom_strand)
-        else:
-            alignment = aligner.align_sequences(seq_records)
+        if not reference:
+            print(f"[ALIGN] {marker_id}: skipped — no Ref_0001")
+            return {
+                'status': 'original', 'marker_id': marker_id, 'sequences': None, 'variants': None,
+                'note': "This locus has no Ref_0001 microhaplotype to align to, so its "
+                        "sequences are shown unaligned.",
+            }
+
+        # Each microhaplotype's alignment to Ref_0001 is BIGr's own,
+        # computed in R by the database build (scripts/align_microhaplotypes.py).
+        stored = {row['haplotype_name']: row for row in stored_alignments}
+        missing = [r.id for r in seq_records if r is not reference and r.id not in stored]
+        if missing:
+            raise ValueError(
+                "this database has no BIGr alignment for this locus. Rebuild the "
+                "database, or run scripts/align_microhaplotypes.py on it."
+            )
+        pairwise = []
+        for record in seq_records:
+            if record is reference:
+                continue
+            ref_row = stored[record.id]['aligned_reference']
+            seq_row = stored[record.id]['aligned_sequence']
+            if bottom_strand:
+                # BIGr aligns bottom-strand loci reverse complemented; turn
+                # the rows back to the amplicon orientation shown here.
+                ref_row = reverse_complement_row(ref_row)
+                seq_row = reverse_complement_row(seq_row)
+            pairwise.append((record.id, ref_row, seq_row))
+        alignment = merge_reference_alignments(
+            reference, pairwise, pad_toward_start=bottom_strand)
 
         annotator = VariantAnnotator(min_frequency=0.1)
         aligned_variants_raw = annotator.annotate_alignment(alignment)
@@ -1304,6 +1309,11 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
                     html.I(className="fas fa-exclamation-triangle me-2"),
                     f"Alignment failed: {alignment_data['error']}"
                 ], color="warning", className="mt-2", dismissable=True)
+            elif alignment_matches_marker and alignment_data.get('note'):
+                status_message = dbc.Alert([
+                    html.I(className="fas fa-info-circle me-2"),
+                    alignment_data['note']
+                ], color="info", className="mt-2", dismissable=True)
             elif alignment_matches_marker and alignment_data.get('sequences'):
                 status_message = dbc.Alert([
                     html.I(className="fas fa-info-circle me-2"),

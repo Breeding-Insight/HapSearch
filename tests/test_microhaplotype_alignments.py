@@ -7,14 +7,14 @@ import unittest
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-from alignment.aligner import MSAAligner, reverse_complement_row
+from alignment.aligner import merge_reference_alignments, reverse_complement_row
 from scripts.align_microhaplotypes import align_database
 
 
 class MergeReferenceAlignmentsTests(unittest.TestCase):
     def test_keeps_each_pairwise_alignment_and_adds_insert_columns(self):
         reference = SeqRecord(Seq("ACGTAC"), id="L|Ref_0001")
-        alignment = MSAAligner.merge_reference_alignments(reference, [
+        alignment = merge_reference_alignments(reference, [
             ("L|Alt_0002", "ACGTAC", "ACCTAC"),
             ("L|RefMatch_0001", "AC--GTAC", "ACTTGTAC"),  # inserts TT
             ("L|AltMatch_0001", "ACGTAC", "A-GTA-"),
@@ -31,7 +31,7 @@ class MergeReferenceAlignmentsTests(unittest.TestCase):
     def test_rejects_an_alignment_against_another_reference(self):
         reference = SeqRecord(Seq("ACGT"), id="L|Ref_0001")
         with self.assertRaises(ValueError):
-            MSAAligner.merge_reference_alignments(reference, [("L|Alt_0002", "ACGA", "ACGT")])
+            merge_reference_alignments(reference, [("L|Alt_0002", "ACGA", "ACGT")])
 
     def test_reverse_complement_row_keeps_gaps(self):
         self.assertEqual(reverse_complement_row("AC-GTN"), "NAC-GT")

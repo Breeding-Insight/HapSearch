@@ -59,7 +59,7 @@ Split-view interface for searching, browsing, and examining genetic markers with
 - Right panel: Detailed marker view with genomic position and haplotype count
 - Multiple Sequence Alignment (MSA) visualization with color-coded nucleotides (A, G, C, T, gaps)
 - Variant annotation overlay (SNPs, Indels, Target SNPs) with visual markers
-- Toggle between original unaligned and CLUSTAL Omega-aligned sequences
+- Toggle between original unaligned and aligned sequences (BIGr's alignment of each microhaplotype to the locus's Ref)
 - Automatic variant detection from sequences when variants not in database
 - Genomic position mapping for aligned sequences
 - Cross-tab navigation to Haplotype Explorer via haplotype links
@@ -84,9 +84,9 @@ Multi-criteria search interface for discovering haplotypes and connecting to ass
 
 ### Sequence Alignment
 
-CLUSTAL Omega integration for accurate multiple sequence alignment and variant detection.
+Each microhaplotype is aligned to its locus's Ref_0001 exactly as BIGr does (`pwalign::pairwiseAlignment` with BIGr's settings). The database build runs these alignments in R and stores them, and the Multiple Sequence Alignment tab stacks them into one alignment.
 
-- Automatic alignment when markers are selected in Marker Explorer
+- Alignment shown automatically when a locus is selected in the Multiple Sequence Alignment tab
 - Variant annotation from aligned sequences (SNPs, indels, transitions, transversions)
 - Genomic position mapping accounting for gaps in aligned sequences
 - Visualization of gaps and indels in MSA heatmap
@@ -175,7 +175,7 @@ Command-line scripts for importing and initializing data from various sources.
 
 ## Technical Stack
 
-**Current Stack**: Python 3.13+ with Dash web framework, Microsoft SQL Server, BioPython for bioinformatics, CLUSTAL Omega/MUSCLE for sequence alignment, Plotly for visualization, and Docker for deployment.
+**Current Stack**: Python 3.13+ with Dash web framework, Microsoft SQL Server, BioPython for bioinformatics, R/Bioconductor pwalign (BIGr's settings, run at database build time) for sequence alignment, Plotly for visualization, and Docker for deployment.
 
 **Future Considerations**: PostgreSQL/MySQL for larger datasets, Redis for caching, FastAPI for REST APIs, cloud services for hosting, Kubernetes for scalable deployments.
 
