@@ -99,6 +99,13 @@ This takes about 3 minutes per species and needs read access to the data
 repositories. It writes `data/hapsearch.db` only if every import and check passes, and
 prints how many rows each table gained or lost compared with your previous local build.
 
+The build also needs R with the Bioconductor packages Biostrings and pwalign
+(`BiocManager::install("pwalign")`, or `apt-get install r-bioc-pwalign` on
+Debian/Ubuntu). It aligns every microhaplotype to its locus's `Ref_0001` exactly as
+BIGr does (`scripts/align_microhaplotypes.R`), and the Multiple Sequence Alignment
+tab shows those stored alignments. To add them to an existing database without a
+rebuild: `python scripts/align_microhaplotypes.py --db data/hapsearch.db`.
+
 ## Roll back
 
 Cloud Run keeps earlier revisions. In **Cloud Run → hapsearch → Revisions**, choose the

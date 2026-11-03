@@ -20,6 +20,7 @@ from database.queries import (
     get_markers_paginated,
     get_marker_details,
     get_microhaplotypes_for_marker,
+    get_alignments_for_marker,
     get_variants_for_marker,
     get_all_chromosomes_for_species,
     get_botloci_count,
@@ -38,7 +39,7 @@ from alignment.coordinates import (
     relative_position,
     relative_positions,
 )
-from alignment.aligner import MSAAligner
+from alignment.aligner import MSAAligner, reverse_complement_row
 from alignment.variant_annotator import VariantAnnotator
 from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
@@ -1033,10 +1034,10 @@ def create_variant_table(variants):
     prevent_initial_call=True
 )
 def align_marker_sequences(marker_id):
-    """Align a marker's alleles when it is selected.
+    """Align a marker's microhaplotypes when it is selected.
 
-    Each allele is aligned to the Ref allele so its variants are relative to
-    the reference; CLUSTAL Omega is the fallback for loci without one.
+    Each microhaplotype shows BIGr's alignment to the locus's Ref_0001, stored
+    by the database build; CLUSTAL Omega is the fallback for loci without a Ref.
     """
     import time as _time
     if not marker_id:
@@ -1051,6 +1052,7 @@ def align_marker_sequences(marker_id):
             haplotypes = get_microhaplotypes_for_marker(db, marker_id)
             marker = get_marker_details(db, marker_id)
             bottom_strand = is_bottom_locus(db, marker_id)
+            stored_alignments = get_alignments_for_marker(db, marker_id)
 
         print(f"[ALIGN] {marker_id}: {len(haplotypes)} haplotypes, "
               f"seq lengths={[len(h['haplotype_sequence']) for h in haplotypes[:5]]}")
@@ -1066,16 +1068,31 @@ def align_marker_sequences(marker_id):
             seq_records.append(record)
 
         aligner = MSAAligner(algorithm='clustal')
-        reference_id = next(
-            (r.id for r in seq_records if 'Ref_' in r.id and 'RefMatch' not in r.id),
-            None,
-        )
-        if reference_id:
-            # Indels go to the lowest genome coordinate of their repeat run
-            # (VCF convention): the end of a bottom-strand amplicon, the start
-            # of a top-strand one.
-            alignment = aligner.align_to_reference(
-                seq_records, reference_id, gaps_toward_end=bottom_strand)
+        reference = next((r for r in seq_records if r.id.endswith('|Ref_0001')), None)
+        if reference:
+            # Each microhaplotype's alignment to Ref_0001 is BIGr's own,
+            # computed in R by the database build (scripts/align_microhaplotypes.py).
+            stored = {row['haplotype_name']: row for row in stored_alignments}
+            missing = [r.id for r in seq_records if r is not reference and r.id not in stored]
+            if missing:
+                raise ValueError(
+                    "this database has no BIGr alignment for this locus. Rebuild the "
+                    "database, or run scripts/align_microhaplotypes.py on it."
+                )
+            pairwise = []
+            for record in seq_records:
+                if record is reference:
+                    continue
+                ref_row = stored[record.id]['aligned_reference']
+                seq_row = stored[record.id]['aligned_sequence']
+                if bottom_strand:
+                    # BIGr aligns bottom-strand loci reverse complemented; turn
+                    # the rows back to the amplicon orientation shown here.
+                    ref_row = reverse_complement_row(ref_row)
+                    seq_row = reverse_complement_row(seq_row)
+                pairwise.append((record.id, ref_row, seq_row))
+            alignment = aligner.merge_reference_alignments(
+                reference, pairwise, pad_toward_start=bottom_strand)
         else:
             alignment = aligner.align_sequences(seq_records)
 

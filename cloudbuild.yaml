@@ -31,8 +31,11 @@ steps:
   #    The build stops here if any import or check fails, so nothing is
   #    deployed. Sources are fetched outside /workspace to keep them out of the
   #    Docker build context.
+  #    Microhaplotypes are aligned to their Ref in R with BIGr's settings
+  #    (scripts/align_microhaplotypes.R); Debian trixie packages pwalign, so the
+  #    image is pinned to trixie.
   - id: build-database
-    name: python:3.13-slim
+    name: python:3.13-slim-trixie
     entrypoint: bash
     env:
       - HAPSEARCH_BUILD_CONNECTION=projects/${PROJECT_ID}/locations/${_REGION}/connections/${_GITHUB_CONNECTION}
@@ -41,8 +44,9 @@ steps:
       - -c
       - |
         set -euo pipefail
-        # git fetches the data sources.
-        apt-get update -qq && apt-get install -y -qq --no-install-recommends git > /dev/null
+        # git fetches the data sources; R and pwalign align the microhaplotypes.
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+          git r-base-core r-bioc-pwalign > /dev/null
         pip install --quiet --root-user-action=ignore -r requirements.txt
         python -W ignore scripts/build_database.py \
           --sources data_sources.toml \

@@ -295,6 +295,30 @@ def get_microhaplotypes_for_marker(db: DatabaseManager, marker_id: str) -> List[
     return db.execute_query(query, (marker_id,))
 
 
+def get_alignments_for_marker(db: DatabaseManager, marker_id: str) -> List[Dict[str, Any]]:
+    """Stored BIGr alignments of a marker's microhaplotypes to its Ref_0001.
+
+    Rows are in BIGr's orientation (reverse complemented for bottom-strand
+    loci); see scripts/align_microhaplotypes.py. Empty when the database has
+    no alignments.
+    """
+    if not db.table_exists('microhaplotype_alignments'):
+        return []
+    query = """
+        SELECT
+            m.haplotype_name,
+            ref.haplotype_name AS reference_name,
+            a.aligned_reference,
+            a.aligned_sequence
+        FROM microhaplotype_alignments a
+        JOIN microhaplotypes m ON m.id = a.microhaplotype_id
+        JOIN microhaplotypes ref ON ref.id = a.reference_id
+        JOIN markers mk ON mk.id = m.marker_id
+        WHERE mk.marker_id = ?
+    """
+    return db.execute_query(query, (marker_id,))
+
+
 def get_variants_for_marker(db: DatabaseManager, marker_id: str) -> List[Dict[str, Any]]:
     """Get all variants for a marker (Feature 2)"""
     query = """

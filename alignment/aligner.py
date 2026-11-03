@@ -1,13 +1,13 @@
 """Multiple Sequence Alignment Engine
 
-Provides CLUSTAL Omega alignment and reference-anchored alignment for
-microhaplotype sequences
+Provides CLUSTAL Omega alignment, and stacks the stored BIGr alignments of a
+locus's microhaplotypes to their Ref into one alignment
 """
 
 from Bio import SeqIO, AlignIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from Bio.Align import MultipleSeqAlignment, PairwiseAligner
+from Bio.Align import MultipleSeqAlignment
 import tempfile
 import os
 from typing import List, Union
@@ -47,60 +47,42 @@ class MSAAligner:
 
         return self._align_clustal(sequences)
 
-    def align_to_reference(self, sequences, reference_id: str,
-                           gaps_toward_end: bool = False) -> MultipleSeqAlignment:
+    @staticmethod
+    def merge_reference_alignments(reference: SeqRecord, pairwise: List[tuple],
+                                   pad_toward_start: bool = False) -> MultipleSeqAlignment:
         """
-        Align every sequence to one reference and merge the results.
+        Stack pairwise alignments to one reference into a single alignment.
 
-        Each sequence is aligned to the reference on its own, so its variants
-        are always relative to the reference rather than to the other
-        sequences. Gaps inside a repeat run (e.g. one A missing from AAAA) are
-        slid to one end of the run so equivalent indels share a column.
+        Each sequence keeps exactly the alignment it was given, so its variants
+        are relative to the reference. Bases a sequence inserts relative to the
+        reference get their own columns; the other rows are gapped there.
 
         Args:
-            sequences: Input sequences in various formats (must include the reference)
-            reference_id: ID of the reference record
-            gaps_toward_end: Slide gaps toward the end of the sequence instead
-                of the start. For a bottom-strand amplicon the end is the
-                lowest genome coordinate, matching VCF left-normalization.
+            reference: The reference record
+            pairwise: (record_id, aligned_reference, aligned_sequence) for each
+                other sequence, both rows gapped and the same length
+            pad_toward_start: Right-align inserted bases within their columns
+                (gaps first) instead of left-aligning them
 
         Returns:
             MultipleSeqAlignment with the reference first
         """
-        seq_records = self._parse_sequences(sequences)
-        if len(seq_records) < 2:
-            raise ValueError("At least 2 sequences required for alignment")
-
-        reference = next((r for r in seq_records if r.id == reference_id), None)
-        if reference is None:
-            raise ValueError(f"Reference {reference_id!r} not found")
         ref_seq = str(reference.seq).upper()
-        others = [r for r in seq_records if r is not reference]
 
-        aligner = PairwiseAligner()
-        aligner.mode = 'global'
-        aligner.match_score = 2
-        aligner.mismatch_score = -3
-        aligner.open_gap_score = -5
-        aligner.extend_gap_score = -2
-        # Alleles can be truncated relative to the reference.
-        aligner.end_gap_score = 0
-
-        # For each allele: the base (or '-') aligned to each reference base,
+        # For each sequence: the base (or '-') aligned to each reference base,
         # and the bases inserted before each reference base (slot len(ref) = after the last).
         per_record = []
-        for record in others:
-            seq = str(record.seq).upper()
-            ref_row, seq_row = _pairwise_rows(aligner, ref_seq, seq)
-            ref_row, seq_row = _normalize_gaps(ref_row, seq_row, gaps_toward_end)
+        for record_id, ref_row, seq_row in pairwise:
+            if ref_row.replace('-', '').upper() != ref_seq:
+                raise ValueError(f"Alignment for {record_id} is not against {reference.id}")
             aligned = []
             inserts = [''] * (len(ref_seq) + 1)
-            for ref_char, seq_char in zip(ref_row, seq_row):
+            for ref_char, seq_char in zip(ref_row.upper(), seq_row.upper()):
                 if ref_char == '-':
                     inserts[len(aligned)] += seq_char
                 else:
                     aligned.append(seq_char)
-            per_record.append((record, aligned, inserts))
+            per_record.append((record_id, aligned, inserts))
 
         slot_widths = [
             max((len(inserts[slot]) for _, _, inserts in per_record), default=0)
@@ -108,7 +90,7 @@ class MSAAligner:
         ]
 
         def pad(insert, width):
-            return insert.rjust(width, '-') if gaps_toward_end else insert.ljust(width, '-')
+            return insert.rjust(width, '-') if pad_toward_start else insert.ljust(width, '-')
 
         def build_row(aligned, inserts):
             parts = []
@@ -120,8 +102,8 @@ class MSAAligner:
 
         rows = [SeqRecord(Seq(build_row(list(ref_seq), [''] * (len(ref_seq) + 1))),
                           id=reference.id, description="")]
-        for record, aligned, inserts in per_record:
-            rows.append(SeqRecord(Seq(build_row(aligned, inserts)), id=record.id, description=""))
+        for record_id, aligned, inserts in per_record:
+            rows.append(SeqRecord(Seq(build_row(aligned, inserts)), id=record_id, description=""))
         return MultipleSeqAlignment(rows)
 
     def _parse_sequences(self, sequences):
@@ -249,61 +231,9 @@ class MSAAligner:
         ]
 
 
-def _pairwise_rows(aligner: PairwiseAligner, ref_seq: str, seq: str):
-    """Return the gapped reference and sequence rows of the best alignment."""
-    alignment = aligner.align(ref_seq, seq)[0]
-    ref_row, seq_row = [], []
-    (ref_blocks, seq_blocks) = alignment.aligned
-    ref_pos = seq_pos = 0
-    for (ref_start, ref_end), (seq_start, seq_end) in zip(ref_blocks, seq_blocks):
-        # Unaligned stretches before this block are gaps in the other row.
-        ref_row.append(ref_seq[ref_pos:ref_start]); seq_row.append('-' * (ref_start - ref_pos))
-        ref_row.append('-' * (seq_start - seq_pos)); seq_row.append(seq[seq_pos:seq_start])
-        ref_row.append(ref_seq[ref_start:ref_end]); seq_row.append(seq[seq_start:seq_end])
-        ref_pos, seq_pos = ref_end, seq_end
-    ref_row.append(ref_seq[ref_pos:]); seq_row.append('-' * (len(ref_seq) - ref_pos))
-    ref_row.append('-' * (len(seq) - seq_pos)); seq_row.append(seq[seq_pos:])
-    return ''.join(ref_row), ''.join(seq_row)
+_COMPLEMENT = str.maketrans('ACGTMRWSYKVHDBNacgtmrwsykvhdbn', 'TGCAKYWSRMBDHVNtgcakywsrmbdhvn')
 
 
-def _normalize_gaps(top: str, bottom: str, toward_end: bool):
-    """Slide each gap run as far as it goes toward one end without changing the score.
-
-    A gap over bases B[s:e] can move one step toward the end when B[s] == B[e]
-    (the run rotates), and toward the start when B[s-1] == B[e-1].
-    """
-    rows = [list(top), list(bottom)]
-    length = len(top)
-    changed = True
-    while changed:
-        changed = False
-        for gapped, other in ((0, 1), (1, 0)):
-            g, o = rows[gapped], rows[other]
-            col = 0
-            while col < length:
-                if g[col] != '-':
-                    col += 1
-                    continue
-                start = col
-                while col < length and g[col] == '-':
-                    col += 1
-                end = col
-                # Gaps at either end only mark a truncated sequence; leave them.
-                if start == 0 or end == length:
-                    continue
-                if toward_end:
-                    while (end < length and g[end] != '-' and o[end] != '-'
-                           and o[start] != '-' and o[start] == o[end]):
-                        g[start], g[end] = g[end], '-'
-                        start += 1
-                        end += 1
-                        changed = True
-                    col = end
-                else:
-                    while (start > 0 and g[start - 1] != '-' and o[start - 1] != '-'
-                           and o[end - 1] != '-' and o[start - 1] == o[end - 1]):
-                        g[end - 1], g[start - 1] = g[start - 1], '-'
-                        start -= 1
-                        end -= 1
-                        changed = True
-    return ''.join(rows[0]), ''.join(rows[1])
+def reverse_complement_row(row: str) -> str:
+    """Reverse complement a gapped alignment row; gaps stay gaps."""
+    return row.translate(_COMPLEMENT)[::-1]
