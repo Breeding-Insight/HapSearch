@@ -42,7 +42,8 @@ stored image and Firestore storage.
 The database is rebuilt from scratch from the files in
 `Breeding-Insight/alfalfa_haplotype_db` and baked into the image. Cloud Build
 does this on every run (`cloudbuild.yaml`): clone the data repository at a tag,
-run `scripts/build_database.py`, build the image, deploy. Cloud Run switches
+run `scripts/build_database.py` (which also aligns every microhaplotype to its
+Ref in R with BIGr's settings), build the image, deploy. Cloud Run switches
 revisions atomically, so visitors never see a half-updated database. See
 [updating-data.md](updating-data.md) for adding data and publishing.
 

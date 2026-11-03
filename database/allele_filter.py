@@ -108,7 +108,7 @@ def resolve_allele_filter(species_id, program_ids, allele_filter) -> Optional[Fr
 
 
 def allele_filter_options(species_id, program_ids) -> List[Dict[str, str]]:
-    """Choices for the Alleles filter, labelled with the selected programs' names."""
+    """Choices for the Microhaplotypes filter, labelled with the selected programs' names."""
     if not species_id:
         return []
     catalog = program_catalog(int(species_id))
@@ -118,7 +118,7 @@ def allele_filter_options(species_id, program_ids) -> List[Dict[str, str]]:
     # the chart ("pair:<first>|<second>") always matches one of these values.
     programs = [group["group_id"] for group in catalog if group["group_id"] in selected]
     options = [
-        {"label": "All alleles in the selected programs", "value": ANY},
+        {"label": "All microhaplotypes in the selected programs", "value": ANY},
         {"label": "Shared by every selected program", "value": ALL},
     ]
     options += [{"label": f"Only in {labels[g]}", "value": f"only:{g}"} for g in programs]

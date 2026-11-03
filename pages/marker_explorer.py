@@ -20,6 +20,7 @@ from database.queries import (
     get_markers_paginated,
     get_marker_details,
     get_microhaplotypes_for_marker,
+    get_alignments_for_marker,
     get_variants_for_marker,
     get_all_chromosomes_for_species,
     get_botloci_count,
@@ -38,7 +39,7 @@ from alignment.coordinates import (
     relative_position,
     relative_positions,
 )
-from alignment.aligner import MSAAligner
+from alignment.aligner import merge_reference_alignments, reverse_complement_row
 from alignment.variant_annotator import VariantAnnotator
 from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
@@ -462,7 +463,7 @@ def create_marker_detail_view(marker_id):
 
             html.Div(
                 [html.I(className="fas fa-hand-pointer me-2"),
-                 "Click an allele name in the alignment to open it in Microhaplotypes."],
+                 "Click a microhaplotype name in the alignment to open it in the Microhaplotypes tab."],
                 className="small mb-3",
             ),
 
@@ -769,11 +770,11 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
                 x_values.append(marker['position_start'] + align_pos)
         
         x_title = 'Genomic Position'
-        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
     else:
         x_values = list(range(marker['position_start'], marker['position_start'] + seq_length))
         x_title = 'Genomic Position'
-        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
 
     target_snp_x_pos = None
     if target_snp_position is not None:
@@ -801,7 +802,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         target_snp_x_pos = x_pos
         x_values = relative_positions(x_values, target_snp_x_pos, is_bottom_strand)
         x_title = 'Relative Position to Target SNP'
-        hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
 
     # For unaligned sequences, ensure zmin and zmax are set correctly for single color
     if not is_aligned and n_colors == 1:
@@ -966,7 +967,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             tickvals=list(range(len(haplotypes))),
             ticktext=[_allele_row_label(name, highlight_names) for name in haplotype_names],
             tickfont=MSA_AXIS_TICK_FONT,
-            title=dict(text='Allele Variant', font=MSA_AXIS_TITLE_FONT)
+            title=dict(text='Microhaplotype', font=MSA_AXIS_TITLE_FONT)
         ),
         plot_bgcolor='#dee2e6' if not is_aligned else '#f8f9fa',  # Darker gray for unaligned to show grid lines better
         paper_bgcolor='#f8f9fa',  # Bootstrap bg-light color for the entire figure area (matches legend box)
@@ -1033,10 +1034,11 @@ def create_variant_table(variants):
     prevent_initial_call=True
 )
 def align_marker_sequences(marker_id):
-    """Align a marker's alleles when it is selected.
+    """Align a marker's microhaplotypes when it is selected.
 
-    Each allele is aligned to the Ref allele so its variants are relative to
-    the reference; CLUSTAL Omega is the fallback for loci without one.
+    Each microhaplotype shows BIGr's alignment to the locus's Ref_0001, stored
+    by the database build. A locus without a Ref_0001 is shown unaligned, as
+    BIGr skips it too.
     """
     import time as _time
     if not marker_id:
@@ -1051,6 +1053,7 @@ def align_marker_sequences(marker_id):
             haplotypes = get_microhaplotypes_for_marker(db, marker_id)
             marker = get_marker_details(db, marker_id)
             bottom_strand = is_bottom_locus(db, marker_id)
+            stored_alignments = get_alignments_for_marker(db, marker_id)
 
         print(f"[ALIGN] {marker_id}: {len(haplotypes)} haplotypes, "
               f"seq lengths={[len(h['haplotype_sequence']) for h in haplotypes[:5]]}")
@@ -1065,19 +1068,38 @@ def align_marker_sequences(marker_id):
             record = SeqRecord(seq, id=hap['haplotype_name'], description="")
             seq_records.append(record)
 
-        aligner = MSAAligner(algorithm='clustal')
-        reference_id = next(
-            (r.id for r in seq_records if 'Ref_' in r.id and 'RefMatch' not in r.id),
-            None,
-        )
-        if reference_id:
-            # Indels go to the lowest genome coordinate of their repeat run
-            # (VCF convention): the end of a bottom-strand amplicon, the start
-            # of a top-strand one.
-            alignment = aligner.align_to_reference(
-                seq_records, reference_id, gaps_toward_end=bottom_strand)
-        else:
-            alignment = aligner.align_sequences(seq_records)
+        reference = next((r for r in seq_records if r.id.endswith('|Ref_0001')), None)
+        if not reference:
+            print(f"[ALIGN] {marker_id}: skipped — no Ref_0001")
+            return {
+                'status': 'original', 'marker_id': marker_id, 'sequences': None, 'variants': None,
+                'note': "This locus has no Ref_0001 microhaplotype to align to, so its "
+                        "sequences are shown unaligned.",
+            }
+
+        # Each microhaplotype's alignment to Ref_0001 is BIGr's own,
+        # computed in R by the database build (scripts/align_microhaplotypes.py).
+        stored = {row['haplotype_name']: row for row in stored_alignments}
+        missing = [r.id for r in seq_records if r is not reference and r.id not in stored]
+        if missing:
+            raise ValueError(
+                "this database has no BIGr alignment for this locus. Rebuild the "
+                "database, or run scripts/align_microhaplotypes.py on it."
+            )
+        pairwise = []
+        for record in seq_records:
+            if record is reference:
+                continue
+            ref_row = stored[record.id]['aligned_reference']
+            seq_row = stored[record.id]['aligned_sequence']
+            if bottom_strand:
+                # BIGr aligns bottom-strand loci reverse complemented; turn
+                # the rows back to the amplicon orientation shown here.
+                ref_row = reverse_complement_row(ref_row)
+                seq_row = reverse_complement_row(seq_row)
+            pairwise.append((record.id, ref_row, seq_row))
+        alignment = merge_reference_alignments(
+            reference, pairwise, pad_toward_start=bottom_strand)
 
         annotator = VariantAnnotator(min_frequency=0.1)
         aligned_variants_raw = annotator.annotate_alignment(alignment)
@@ -1287,6 +1309,11 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
                     html.I(className="fas fa-exclamation-triangle me-2"),
                     f"Alignment failed: {alignment_data['error']}"
                 ], color="warning", className="mt-2", dismissable=True)
+            elif alignment_matches_marker and alignment_data.get('note'):
+                status_message = dbc.Alert([
+                    html.I(className="fas fa-info-circle me-2"),
+                    alignment_data['note']
+                ], color="info", className="mt-2", dismissable=True)
             elif alignment_matches_marker and alignment_data.get('sequences'):
                 status_message = dbc.Alert([
                     html.I(className="fas fa-info-circle me-2"),
@@ -1295,7 +1322,7 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
             elif alignment_matches_marker and len(haplotypes) < 2:
                 status_message = dbc.Alert([
                     html.I(className="fas fa-info-circle me-2"),
-                    f"Showing original sequences ({len(haplotypes)} allele)"
+                    f"Showing original sequences ({len(haplotypes)} microhaplotype)"
                 ], color="info", className="mt-2", dismissable=True)
             else:
                 status_message = html.Div()
@@ -1323,7 +1350,7 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
                 status_message,
                 html.Div([
                     html.Span("●", style={'color': FILTER_MARK_COLOR}),
-                    " Alleles that match the selected filters",
+                    " Microhaplotypes that match the selected filters",
                 ], className="small mt-2"),
             ])
 

@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS microhaplotype_presence_summary (
     PRIMARY KEY (microhaplotype_id, species_id, entity_type)
 );
 
+-- Each microhaplotype's alignment to its locus's Ref_0001, computed in R with
+-- BIGr's settings by scripts/align_microhaplotypes.py. Rows are in BIGr's
+-- orientation: reverse complemented for bottom-strand loci.
+CREATE TABLE IF NOT EXISTS microhaplotype_alignments (
+    microhaplotype_id INTEGER PRIMARY KEY REFERENCES microhaplotypes(id),
+    reference_id INTEGER NOT NULL REFERENCES microhaplotypes(id),
+    aligned_reference TEXT NOT NULL,
+    aligned_sequence TEXT NOT NULL,
+    score REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     orcid_id TEXT NOT NULL UNIQUE,

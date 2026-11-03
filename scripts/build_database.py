@@ -48,6 +48,7 @@ sys.path.insert(0, REPO_ROOT)
 
 import config  # noqa: E402
 from database.db_manager import DatabaseManager  # noqa: E402
+from scripts.align_microhaplotypes import AlignmentError, align_database  # noqa: E402
 from scripts.import_sample_presence import PRESENCE_FILE_SUFFIXES  # noqa: E402
 from scripts.init_database import init_database  # noqa: E402
 
@@ -55,7 +56,7 @@ DEFAULT_MAX_SKIPPED_ALLELE_FRACTION = 0.02
 FASTA_SUFFIXES = (".fa.gz", ".fasta.gz", ".fna.gz", ".fa", ".fasta", ".fna")
 COMPARED_TABLES = [
     "species", "chromosomes", "markers", "microhaplotypes", "botloci",
-    "projects", "samples", "contacts", "presence_artifacts",
+    "projects", "samples", "contacts", "presence_artifacts", "microhaplotype_alignments",
 ]
 
 
@@ -580,6 +581,17 @@ def validate(plan: BuildPlan, db_path: str) -> List[str]:
                         f"in the FASTA (limit {plan.max_skipped_allele_fraction:.0%}). Is the "
                         "FASTA version in manifest.toml the one these calls were made against?"
                     )
+        unaligned = conn.execute(
+            r"""
+            SELECT COUNT(*) FROM microhaplotypes m
+            JOIN microhaplotypes ref
+              ON ref.marker_id = m.marker_id AND ref.haplotype_name LIKE '%|Ref\_0001' ESCAPE '\'
+            WHERE m.id != ref.id
+              AND m.id NOT IN (SELECT microhaplotype_id FROM microhaplotype_alignments)
+            """
+        ).fetchone()[0]
+        if unaligned:
+            problems.append(f"{unaligned:,} microhaplotypes have no alignment to their Ref_0001")
     finally:
         conn.close()
     return problems
@@ -850,6 +862,11 @@ def _build(sources: List[DataSource], output: str, compare_to: Optional[str], ca
         for source, plan in builds:
             _log(f"\n##### {source.name} ({plan.manifest_path}) #####")
             run_imports(plan, staging)
+        _log("\n=== Aligning microhaplotypes to their Ref (BIGr settings, in R) ===")
+        try:
+            align_database(staging, log=_log)
+        except AlignmentError as exc:
+            raise BuildError(str(exc)) from exc
         info = write_build_info(staging, builds)
         _log("\nOptimizing...")
         DatabaseManager(db_path=staging, read_only=False).optimize(vacuum=True)
@@ -858,7 +875,8 @@ def _build(sources: List[DataSource], output: str, compare_to: Optional[str], ca
         return False
 
     _log("\nChecking the result...")
-    problems = [problem for _, plan in builds for problem in validate(plan, staging)]
+    problems = list(dict.fromkeys(
+        problem for _, plan in builds for problem in validate(plan, staging)))
     if problems:
         _log("Build failed checks; the existing database was not replaced:")
         for problem in problems:
