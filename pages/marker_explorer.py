@@ -462,7 +462,7 @@ def create_marker_detail_view(marker_id):
 
             html.Div(
                 [html.I(className="fas fa-hand-pointer me-2"),
-                 "Click an allele name in the alignment to open it in Microhaplotypes."],
+                 "Click a microhaplotype name in the alignment to open it in the Microhaplotypes tab."],
                 className="small mb-3",
             ),
 
@@ -769,11 +769,11 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
                 x_values.append(marker['position_start'] + align_pos)
         
         x_title = 'Genomic Position'
-        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
     else:
         x_values = list(range(marker['position_start'], marker['position_start'] + seq_length))
         x_title = 'Genomic Position'
-        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
 
     target_snp_x_pos = None
     if target_snp_position is not None:
@@ -801,7 +801,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         target_snp_x_pos = x_pos
         x_values = relative_positions(x_values, target_snp_x_pos, is_bottom_strand)
         x_title = 'Relative Position to Target SNP'
-        hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
 
     # For unaligned sequences, ensure zmin and zmax are set correctly for single color
     if not is_aligned and n_colors == 1:
@@ -966,7 +966,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             tickvals=list(range(len(haplotypes))),
             ticktext=[_allele_row_label(name, highlight_names) for name in haplotype_names],
             tickfont=MSA_AXIS_TICK_FONT,
-            title=dict(text='Allele Variant', font=MSA_AXIS_TITLE_FONT)
+            title=dict(text='Microhaplotype', font=MSA_AXIS_TITLE_FONT)
         ),
         plot_bgcolor='#dee2e6' if not is_aligned else '#f8f9fa',  # Darker gray for unaligned to show grid lines better
         paper_bgcolor='#f8f9fa',  # Bootstrap bg-light color for the entire figure area (matches legend box)
@@ -1295,7 +1295,7 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
             elif alignment_matches_marker and len(haplotypes) < 2:
                 status_message = dbc.Alert([
                     html.I(className="fas fa-info-circle me-2"),
-                    f"Showing original sequences ({len(haplotypes)} allele)"
+                    f"Showing original sequences ({len(haplotypes)} microhaplotype)"
                 ], color="info", className="mt-2", dismissable=True)
             else:
                 status_message = html.Div()
@@ -1323,7 +1323,7 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
                 status_message,
                 html.Div([
                     html.Span("●", style={'color': FILTER_MARK_COLOR}),
-                    " Alleles that match the selected filters",
+                    " Microhaplotypes that match the selected filters",
                 ], className="small mt-2"),
             ])
 

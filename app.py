@@ -225,7 +225,7 @@ def serve_layout():
                                      placeholder="All programs"),
                     ], lg=5, md=12, className="mb-2 mb-lg-0"),
                     dbc.Col([
-                        html.Label("Alleles", htmlFor='global-allele-filter',
+                        html.Label("Microhaplotypes", htmlFor='global-allele-filter',
                                    className="fw-bold small mb-1"),
                         dcc.Dropdown(id='global-allele-filter', value='any', clearable=False,
                                      searchable=True),

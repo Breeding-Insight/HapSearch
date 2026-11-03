@@ -168,7 +168,7 @@ layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader([
                     html.I(className="fas fa-circle-nodes me-2"),
-                    "Alleles Shared Between Programs"
+                    "Microhaplotypes Shared Between Programs"
                 ]),
                 dbc.CardBody([
                     html.Div(id='overview-filter-status', className="overview-filter-status mb-2"),
@@ -205,7 +205,7 @@ database_layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader([
                     html.I(className="fas fa-chart-column me-2"),
-                    "Alleles per Locus"
+                    "Microhaplotypes per Locus"
                 ]),
                 dbc.CardBody([
                     _overview_loading(
@@ -237,7 +237,7 @@ database_layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader([
                     html.I(className="fas fa-chart-area me-2"),
-                    "Alleles per Locus Across the Genome",
+                    "Microhaplotypes per Locus Across the Genome",
                 ]),
                 dbc.CardBody([
                     html.Div(id='overview-genome-plot-caption', className="small mb-2"),
@@ -417,7 +417,7 @@ def _allele_distribution_figure(allele_counts, highlight_min):
         x=labels,
         y=loci,
         marker_color=colors,
-        hovertemplate="%{x} alleles: %{y:,} loci<extra></extra>",
+        hovertemplate="%{x} microhaplotypes: %{y:,} loci<extra></extra>",
     ))
 
     median = statistics.median(allele_counts)
@@ -446,7 +446,7 @@ def _allele_distribution_figure(allele_counts, highlight_min):
         showlegend=False,
         dragmode=False,
         margin=dict(t=20, l=55, r=15, b=45),
-        xaxis=dict(title="Alleles per locus", type="category", fixedrange=True,
+        xaxis=dict(title="Microhaplotypes per locus", type="category", fixedrange=True,
                    tickangle=0, nticks=20),
         yaxis=dict(title="Loci", fixedrange=True, automargin=True),
     )
@@ -482,7 +482,7 @@ def _genome_locus_figure(rows, highlight_min):
     hover = (
         "<b>%{customdata[0]}</b><br>"
         "%{customdata[1]}: %{customdata[2]:,} bp<br>"
-        "%{y} alleles<extra></extra>"
+        "%{y} microhaplotypes<extra></extra>"
     )
     fig = go.Figure()
     for key in (0, 1):
@@ -500,7 +500,7 @@ def _genome_locus_figure(rows, highlight_min):
     ))
     fig.add_hline(
         y=highlight_min, line=dict(color=CHART_HIGHLIGHT, width=1, dash="dot"),
-        annotation_text=f"top {100 - HIGHLIGHT_PERCENTILE}% (≥{highlight_min} alleles)",
+        annotation_text=f"top {100 - HIGHLIGHT_PERCENTILE}% (≥{highlight_min} microhaplotypes)",
         annotation_position="top left",
         annotation_font=dict(color=APP_INK, size=11),
     )
@@ -513,7 +513,7 @@ def _genome_locus_figure(rows, highlight_min):
         xaxis=dict(title="Chromosome (microhaplotype count)", tickmode="array",
                    tickvals=tick_values, ticktext=tick_text,
                    showgrid=False, zeroline=False, range=[-gap, offset]),
-        yaxis=dict(title="Alleles per locus", fixedrange=True, rangemode="tozero"),
+        yaxis=dict(title="Microhaplotypes per locus", fixedrange=True, rangemode="tozero"),
     )
     return fig
 
@@ -542,9 +542,9 @@ def update_locus_charts(species_id):
         highlight_min = _highlight_threshold(allele_counts)
         caption = [
             html.Div([
-                "Each dot is a locus, placed by its position along the genome and its number of alleles. ",
+                "Each dot is a locus, placed by its position along the genome and its number of microhaplotypes. ",
                 html.Span("Teal dots", style={'color': CHART_HIGHLIGHT, 'fontWeight': '700'}),
-                f" are the top {100 - HIGHLIGHT_PERCENTILE}% (≥{highlight_min} alleles).",
+                f" are the top {100 - HIGHLIGHT_PERCENTILE}% (≥{highlight_min} microhaplotypes).",
             ]),
             html.Div([
                 html.Span([html.I(className="fas fa-hand-pointer me-1"), "Click a dot to open its alignment"],
@@ -918,7 +918,7 @@ def _build_sharing_figure(summary, allele_filter_value=None):
     columns = range(n - 1)
 
     def share(i, j):
-        return f"{pair[i][j] / total[i]:.0%} of {labels[i]}'s alleles" if total[i] else ""
+        return f"{pair[i][j] / total[i]:.0%} of {labels[i]}'s microhaplotypes" if total[i] else ""
 
     z = [[pair[i][j] if j < i else None for j in columns] for i in range(n)]
     upper = max([value for row in z for value in row if value is not None] or [1])
@@ -934,23 +934,23 @@ def _build_sharing_figure(summary, allele_filter_value=None):
         textfont=dict(size=11), customdata=cell_data,
         colorscale=[[0, CHART_HEATMAP_SCALE[0]], [1, CHART_HEATMAP_SCALE[1]]], zmin=0, zmax=upper,
         xgap=2, ygap=2, showscale=False, hoverongaps=False,
-        hovertemplate="<b>%{y}</b> and <b>%{x}</b><br>%{z:,} shared alleles<br>"
-                      "%{customdata}<br><i>Click to list these alleles</i><extra></extra>",
+        hovertemplate="<b>%{y}</b> and <b>%{x}</b><br>%{z:,} shared microhaplotypes<br>"
+                      "%{customdata}<br><i>Click to list these microhaplotypes</i><extra></extra>",
     ), row=1, col=1)
 
     shared = [total[i] - private[i] for i in range(n)]
     fig.add_trace(go.Bar(
         y=labels, x=private, orientation="h", name="Private to the program",
         marker=dict(color=CHART_HIGHLIGHT, line=dict(color="#ffffff", width=1)),
-        hovertemplate="%{y}<br>%{x:,} private alleles<br>"
-                      "<i>Click to list these alleles</i><extra></extra>",
+        hovertemplate="%{y}<br>%{x:,} private microhaplotypes<br>"
+                      "<i>Click to list these microhaplotypes</i><extra></extra>",
     ), row=1, col=2)
     fig.add_trace(go.Bar(
         y=labels, x=shared, orientation="h", name="Shared with another program",
         marker=dict(color=CHART_GENOME_ALTERNATE[1], line=dict(color="#ffffff", width=1)),
         customdata=total,
         hovertemplate="%{y}<br>%{x:,} shared with another program<br>"
-                      "%{customdata:,} alleles in total<extra></extra>",
+                      "%{customdata:,} microhaplotypes in total<extra></extra>",
     ), row=1, col=2)
 
     fig.update_layout(shapes=_selection_shapes(summary["ids"], private, allele_filter_value))
@@ -977,7 +977,7 @@ def _build_sharing_figure(summary, allele_filter_value=None):
     )
     numbers = [str(position + 1) for position in range(n - 1)]
     numbered = [f"{position + 1}  {label}" for position, label in enumerate(labels)]
-    fig.update_xaxes(side="top", title_text="Alleles shared by each pair of programs",
+    fig.update_xaxes(side="top", title_text="Microhaplotypes shared by each pair of programs",
                      title_font=dict(size=12, color=APP_INK),
                      fixedrange=True, automargin=True, constrain="domain",
                      tickmode="array", tickvals=labels[:-1], ticktext=numbers, row=1, col=1)
@@ -995,7 +995,7 @@ def _sharing_headline(summary, allele_filter_value=None):
     n = len(summary["labels"])
     empty_note = None
     if summary["empty"]:
-        empty_note = html.Div("No alleles for this species: " + ", ".join(summary["empty"]) + ".",
+        empty_note = html.Div("No microhaplotypes for this species: " + ", ".join(summary["empty"]) + ".",
                               className="small mt-2")
     if n < 2:
         return empty_note
@@ -1010,7 +1010,7 @@ def _sharing_headline(summary, allele_filter_value=None):
             id='overview-filter-shared-all',
             type="button",
             className="btn btn-sm sharing-all-btn" + (" active" if active else ""),
-            title="Filter to the alleles every selected program shares",
+            title="Filter to the microhaplotypes every selected program shares",
         ),
         html.Span(
             "or click a cell or a teal bar to filter the Microhaplotypes and "
@@ -1172,11 +1172,11 @@ def filter_from_sharing_chart(click_data, chart_state, current_value):
 
 
 def _filter_status(tab, label, count, filtered):
-    """The "Selected alleles" line. The filter tab also offers the tabs that
+    """The "Microhaplotype filter" line. The filter tab also offers the tabs that
     follow the filter; Clear appears only while a filter is set."""
     children = [
-        html.Span("Selected alleles:", className="selected-alleles-label"),
-        html.Span([html.Strong(label), f" ({count:,})"]),
+        html.Span("Microhaplotype filter:", className="selected-alleles-label"),
+        html.Span([html.Strong(label), f" ({count:,} microhaplotypes)"]),
     ]
     if filtered:
         children.append(html.Button("Clear", id={'type': 'allele-filter-clear', 'tab': tab},
@@ -1219,7 +1219,7 @@ def show_filter_status(species_id, program_ids, allele_filter_value, options):
         # No restriction: every allele in the selected programs.
         count = len(allele_filter.sharing_data(int(species_id), program_ids)
                     .get("microhaplotype_groups") or {})
-        label, filtered = "All alleles in the selected programs", False
+        label, filtered = "All microhaplotypes in the selected programs", False
     else:
         count = len(kept)
         label = next((option['label'] for option in options or []
