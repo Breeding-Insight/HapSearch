@@ -5,6 +5,7 @@ import secrets
 import requests as http_requests
 from flask import Blueprint, redirect, request, session, url_for, render_template
 import config
+from auth.access import store_access
 from auth.session import lookup_user, start_local_dev_session
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -88,7 +89,7 @@ def callback():
     if config.BYPASS_AUTH_WHITELIST and _norm(orcid_id) == _norm(config.BYPASS_DEV_ORCID):
         session['orcid_id'] = orcid_id
         session['user_name'] = config.BYPASS_DEV_NAME
-        session['user_role'] = config.BYPASS_DEV_ROLE
+        store_access(config.BYPASS_DEV_ROLE, config.BYPASS_DEV_SPECIES, refreshable=False)
         return redirect('/app/')
 
     # Check whitelist
@@ -101,7 +102,7 @@ def callback():
     # Set session
     session['orcid_id'] = orcid_id
     session['user_name'] = user.get('display_name') or display_name
-    session['user_role'] = user.get('role', 'user')
+    store_access(user.get('role', 'user'), user.get('species'))
 
     # Sign-ins go to the logs (Cloud Logging on Cloud Run), not the user store,
     # so the service only needs read access to Firestore.

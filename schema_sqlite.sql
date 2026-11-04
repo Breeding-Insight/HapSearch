@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT,
     role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     is_active INTEGER DEFAULT 1,
+    -- JSON list of species names a 'user' may see; admins see all species.
+    species TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
