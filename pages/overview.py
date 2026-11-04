@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from dash_app import app
 
 from database import allele_filter
+from pages.export_controls import plot_export_controls
 from database.db_manager import DatabaseManager
 from database.queries import (
     get_database_statistics,
@@ -70,94 +71,6 @@ def _overview_loading(children, class_name="overview-loading-region"):
     )
 
 
-def _plot_export_controls(
-    chart_key,
-    graph_id,
-    filename,
-    default_width=10,
-    default_height=6,
-):
-    """Build BIGapp-style image export controls for a Plotly chart."""
-    return html.Div(
-        [
-            dbc.DropdownMenu(
-                [
-                    html.Div(
-                        [
-                            html.H6("Save Image", className="mb-3"),
-                            html.Label("File", className="fw-bold small mb-1"),
-                            dbc.Select(
-                                id=f"overview-{chart_key}-image-type",
-                                options=[
-                                    {"label": "jpeg", "value": "jpeg"},
-                                    {"label": "png", "value": "png"},
-                                    {"label": "svg", "value": "svg"},
-                                ],
-                                value="png",
-                                size="sm",
-                                className="mb-3",
-                            ),
-                            html.Label("Resolution", className="fw-bold small mb-1"),
-                            dbc.Input(
-                                id=f"overview-{chart_key}-image-res",
-                                type="number",
-                                value=300,
-                                min=50,
-                                max=1000,
-                                step=50,
-                                size="sm",
-                                className="mb-3",
-                            ),
-                            html.Label("Width", className="fw-bold small mb-1"),
-                            dbc.Input(
-                                id=f"overview-{chart_key}-image-width",
-                                type="number",
-                                value=default_width,
-                                min=1,
-                                max=20,
-                                step=0.5,
-                                size="sm",
-                                className="mb-3",
-                            ),
-                            html.Label("Height", className="fw-bold small mb-1"),
-                            dbc.Input(
-                                id=f"overview-{chart_key}-image-height",
-                                type="number",
-                                value=default_height,
-                                min=1,
-                                max=20,
-                                step=0.5,
-                                size="sm",
-                                className="mb-3",
-                            ),
-                            html.Button(
-                                [html.I(className="fas fa-download me-2"), "Save Image"],
-                                id=f"overview-{chart_key}-save-image-btn",
-                                type="button",
-                                className="btn btn-primary btn-sm w-100",
-                                **{
-                                    "data-overview-export-chart": chart_key,
-                                    "data-overview-export-graph": graph_id,
-                                    "data-overview-export-filename": filename,
-                                },
-                            ),
-                        ],
-                        className="px-3 py-2",
-                        style={"width": "300px"},
-                    ),
-                ],
-                label=[html.I(className="fas fa-floppy-disk me-2"), "Save"],
-                color="secondary",
-                toggle_class_name="haplo-action-btn",
-                size="sm",
-                align_end=True,
-                className="d-inline-block",
-            ),
-            html.Div(id=f"overview-{chart_key}-export-status", style={"display": "none"}),
-        ],
-        className="d-flex justify-content-end mb-2",
-    )
-
 # Layout
 # Overview: how alleles are shared between the selected programs. Clicking the
 # chart sets the global allele filter that the other tabs follow.
@@ -174,8 +87,8 @@ layout = dbc.Container([
                     html.Div(id='overview-filter-status', className="overview-filter-status mb-2"),
                     html.Div([
                         html.Div(id='overview-sharing-summary'),
-                        _plot_export_controls(
-                            "sharing",
+                        plot_export_controls(
+                            "overview-sharing",
                             graph_id="overview-sharing-chart",
                             filename="microhaplotype_sharing_distribution",
                             default_width=11,
@@ -266,8 +179,8 @@ database_layout = dbc.Container([
                         size="sm",
                         className="mb-2",
                     ),
-                    _plot_export_controls(
-                        "accumulation",
+                    plot_export_controls(
+                        "overview-accumulation",
                         graph_id="overview-accumulation-chart",
                         filename=ACCUMULATION_EXPORT_FILENAME,
                         default_width=10,
@@ -1081,7 +994,7 @@ def update_accumulation_curve(species_id, n_clicks):
 
 
 @app.callback(
-    Output('overview-accumulation-save-image-btn', 'data-overview-export-filename'),
+    Output('overview-accumulation-image-filename', 'value'),
     Input('selected-species-store', 'data'),
 )
 def update_accumulation_export_filename(species_id):
@@ -1172,8 +1085,7 @@ def filter_from_sharing_chart(click_data, chart_state, current_value):
 
 
 def _filter_status(tab, label, count, filtered):
-    """The "Microhaplotype filter" line. The filter tab also offers the tabs that
-    follow the filter; Clear appears only while a filter is set."""
+    """The "Microhaplotype filter" line. Clear appears only while a filter is set."""
     children = [
         html.Span("Microhaplotype filter:", className="selected-alleles-label"),
         html.Span([html.Strong(label), f" ({count:,} microhaplotypes)"]),
@@ -1181,13 +1093,6 @@ def _filter_status(tab, label, count, filtered):
     if filtered:
         children.append(html.Button("Clear", id={'type': 'allele-filter-clear', 'tab': tab},
                                     className="btn btn-link btn-sm p-0"))
-    if tab == 'programs':
-        children.append(html.Span([
-            html.Button([html.I(className="fas fa-magnifying-glass me-2"), "View in Microhaplotypes"],
-                        id='overview-open-haplotypes', className="btn btn-primary btn-sm"),
-            html.Button([html.I(className="fas fa-align-left me-2"), "View loci in Multiple Sequence Alignment"],
-                        id='overview-open-alignment', className="btn btn-outline-secondary btn-sm haplo-action-btn"),
-        ], className="selected-alleles-actions"))
     return html.Div(children, className="selected-alleles")
 
 
@@ -1235,18 +1140,3 @@ def show_filter_status(species_id, program_ids, allele_filter_value, options):
 )
 def clear_allele_filter(n_clicks):
     return allele_filter.ANY if any(n_clicks or []) else no_update
-
-
-@app.callback(
-    Output('main-tabs', 'active_tab', allow_duplicate=True),
-    Input('overview-open-haplotypes', 'n_clicks'),
-    Input('overview-open-alignment', 'n_clicks'),
-    prevent_initial_call=True
-)
-def open_filtered_tab(haplotype_clicks, alignment_clicks):
-    """Jump to a tab that follows the allele filter."""
-    if ctx.triggered_id == 'overview-open-haplotypes' and haplotype_clicks:
-        return 'haplotype-tab'
-    if ctx.triggered_id == 'overview-open-alignment' and alignment_clicks:
-        return 'marker-tab'
-    return no_update

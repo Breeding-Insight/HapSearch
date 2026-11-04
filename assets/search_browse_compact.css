@@ -151,3 +151,101 @@
   margin-bottom: 0.75rem !important;
 }
 
+
+/* -----------------------------
+   Collapsible Search & Browse panel (Microhaplotypes and MSA tabs)
+------------------------------ */
+
+.browse-layout {
+  flex-wrap: nowrap;
+}
+
+.browse-left-col {
+  flex: 0 0 25%;
+  max-width: 25%;
+  min-width: 240px;
+}
+
+.browse-right-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.browse-layout.is-collapsed .browse-left-col {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+}
+
+.browse-layout.is-collapsed .browse-left-content {
+  display: none !important;
+}
+
+#marker-filters-card .browse-hide-btn,
+#haplotype-filters-card .browse-hide-btn {
+  font-size: 0.8rem !important;
+  padding: 0.15rem 0.55rem !important;
+  white-space: nowrap;
+}
+
+/* Slim rail shown while the panel is hidden */
+.browse-expand-rail {
+  display: none;
+}
+
+.browse-layout.is-collapsed .browse-expand-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  width: 44px;
+  min-height: 240px;
+  padding: 0.75rem 0;
+  border: 1px solid var(--app-border, #d3e0e1);
+  border-radius: var(--app-radius, 10px);
+  background: var(--app-surface-tint, #e6f2f2);
+  color: var(--app-teal, #066a73);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.browse-expand-rail:hover,
+.browse-expand-rail:focus-visible {
+  background: var(--app-teal, #066a73);
+  color: #ffffff;
+}
+
+.browse-rail-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* "Widen alignment" button label follows the panel state */
+.browse-layout .when-panel-hidden,
+.browse-layout.is-collapsed .when-panel-open {
+  display: none;
+}
+
+.browse-layout.is-collapsed .when-panel-hidden {
+  display: inline;
+}
+
+.browse-filters-card .card-header > div {
+  gap: 0.5rem;
+}
+
+.browse-filters-card .card-header h5 {
+  font-size: 1.05rem !important;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.browse-hide-btn {
+  flex-shrink: 0;
+}

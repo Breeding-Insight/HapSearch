@@ -13,6 +13,7 @@ import re
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dash_app import app
+from pages.export_controls import plot_export_controls
 
 from database import allele_filter
 from database.db_manager import DatabaseManager
@@ -48,6 +49,18 @@ from Bio.Align import MultipleSeqAlignment
 def create_single_view_layout():
     return dbc.Row([
         dbc.Col([
+            # Shown only while the panel is hidden: a slim rail that names the
+            # panel and opens it again, so it never just disappears.
+            html.Button(
+                [
+                    html.I(className="fas fa-angles-right"),
+                    html.Span("Search & Browse", className="browse-rail-label"),
+                ],
+                id='marker-expand-rail',
+                className="browse-expand-rail",
+                title="Show the Search & Browse panel",
+                **{'aria-label': "Show the Search & Browse panel"},
+            ),
             html.Div([
                 dbc.Card([
                     dbc.CardHeader([
@@ -57,12 +70,13 @@ def create_single_view_layout():
                                 html.Span("Search & Browse", id='marker-search-title')
                             ], className="mb-0"),
                             dbc.Button(
-                                html.I(className="fas fa-chevron-left", id='marker-minimize-icon'),
+                                [html.I(className="fas fa-angles-left me-1"), "Hide"],
                                 id='marker-minimize-btn',
-                                color="link",
+                                color="secondary",
+                                outline=True,
                                 size="sm",
-                                className="float-end p-0",
-                                style={'color': '#000000', 'textDecoration': 'none'}
+                                className="browse-hide-btn",
+                                title="Hide this panel to give the alignment the full width",
                             ),
                         ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'width': '100%'})
                     ]),
@@ -100,7 +114,7 @@ def create_single_view_layout():
                             )
                         ], id='marker-sequence-search-container')
                     ], id='marker-filters-body')
-                ], style={'flexShrink': '0'}, className="mb-2", id='marker-filters-card'),
+                ], style={'flexShrink': '0'}, className="mb-2 browse-filters-card", id='marker-filters-card'),
 
                 dbc.Card([
                     dbc.CardBody([
@@ -128,8 +142,8 @@ def create_single_view_layout():
                         ], className="mt-2 d-flex justify-content-center align-items-center", id='marker-pagination-container')
                     ])
                 ], id='marker-results-card')
-            ], style={'display': 'flex', 'flexDirection': 'column'}, id='marker-left-panel-content')
-        ], id='marker-left-col', width=3),
+            ], style={'display': 'flex', 'flexDirection': 'column'}, id='marker-left-panel-content', className="browse-left-content")
+        ], id='marker-left-col', className="browse-left-col"),
 
         dbc.Col([
             dbc.Card([
@@ -141,8 +155,8 @@ def create_single_view_layout():
                     html.Div(id='marker-detail-panel')
                 ])
             ])
-        ], id='marker-right-col', width=9)
-    ])
+        ], id='marker-right-col', className="browse-right-col")
+    ], id='marker-layout-row', className="browse-layout")
 
 
 # Layout - calls the function after it's defined
@@ -447,6 +461,12 @@ def create_marker_detail_view(marker_id):
                 html.H6([
                     "Multiple Sequence Alignment"
                 ], className="mb-2 d-inline-block"),
+                plot_export_controls(
+                    "msa",
+                    graph_id="msa-graph",
+                    filename=msa_image_filename(marker),
+                    class_name="float-end ms-2",
+                ),
                 dbc.Button(
                     [html.I(className="fas fa-undo me-2"), "Show Original (Unaligned)"],
                     id='show-original-btn',
@@ -454,6 +474,22 @@ def create_marker_detail_view(marker_id):
                     size='sm',
                     outline=True,
                     className="float-end haplo-action-btn"
+                ),
+                # The label follows the panel state through CSS on
+                # #marker-layout-row, so it is right however the view was built.
+                dbc.Button(
+                    [
+                        html.Span([html.I(className="fas fa-arrows-left-right me-2"),
+                                   "Widen alignment"], className="when-panel-open"),
+                        html.Span([html.I(className="fas fa-angles-left me-2"),
+                                   "Show search panel"], className="when-panel-hidden"),
+                    ],
+                    id='msa-widen-btn',
+                    color='primary',
+                    size='sm',
+                    outline=True,
+                    className="float-end me-2 haplo-action-btn",
+                    title="Hide or show the Search & Browse panel",
                 )
             ]),
             dcc.Loading(
@@ -465,7 +501,9 @@ def create_marker_detail_view(marker_id):
                         config={
                             'displayModeBar': True,
                             'displaylogo': False,
-                            'toImageButtonOptions': {'filename': msa_image_filename(marker)},
+                            # Saving goes through the Save menu, which shows
+                            # the file name first.
+                            'modeBarButtonsToRemove': ['toImage'],
                         }
                     )
                 ], className="msa-results-loading-region"),
@@ -1389,41 +1427,47 @@ def update_msa_visualization(alignment_data, marker_id, allele_filter_value, pro
 
 
 @app.callback(
-    [Output('marker-left-panel-minimized', 'data'),
-     Output('marker-left-col', 'width'),
-     Output('marker-right-col', 'width'),
-     Output('marker-filters-body', 'style'),
-     Output('marker-results-card', 'style'),
-     Output('marker-minimize-icon', 'className'),
-     Output('marker-search-title', 'style'),
-     Output('marker-search-icon', 'style')],
+    Output('marker-left-panel-minimized', 'data'),
     Input('marker-minimize-btn', 'n_clicks'),
+    Input('marker-expand-rail', 'n_clicks'),
+    prevent_initial_call=True
+)
+def toggle_marker_left_panel(_hide_clicks, _rail_clicks):
+    """Hide or show the Search & Browse panel."""
+    return ctx.triggered_id == 'marker-minimize-btn'
+
+
+# The widen button exists only once a locus is open, so it gets its own
+# callback: sharing one with the Hide button makes Dash report a missing
+# Input whenever Hide is clicked before a locus is selected.
+@app.callback(
+    Output('marker-left-panel-minimized', 'data', allow_duplicate=True),
+    Input('msa-widen-btn', 'n_clicks'),
     State('marker-left-panel-minimized', 'data'),
     prevent_initial_call=True
 )
-def toggle_marker_left_panel(n_clicks, is_minimized):
-    """Toggle left panel between minimized and expanded states"""
-    new_state = not is_minimized
-    
-    if new_state:
-        return (
-            True,
-            1,
-            11,
-            {'display': 'none'},
-            {'display': 'none'},
-            "fas fa-chevron-right",
-            {'display': 'none'},
-            {'display': 'none'}
-        )
-    else:
-        return (
-            False,
-            3,
-            9,
-            {},
-            {},  # Show results (no internal scrolling)
-            "fas fa-chevron-left",
-            {},
-            {'marginRight': '0.5rem'}
-        )
+def toggle_marker_panel_from_msa(widen_clicks, is_minimized):
+    # The button is rebuilt with each locus; ignore its first render.
+    if not widen_clicks:
+        return no_update
+    return not is_minimized
+
+
+# Plotly only redraws on window resize, so after the panel opens or
+# closes, resize the alignment to its new column width.
+app.clientside_callback(
+    """
+    function(isMinimized) {
+        // Wait for Dash to apply the new class before measuring.
+        setTimeout(function() {
+            var plot = document.querySelector('#msa-graph .js-plotly-plot');
+            if (plot && window.Plotly) {
+                window.Plotly.Plots.resize(plot);
+            }
+        }, 50);
+        return isMinimized ? 'browse-layout is-collapsed' : 'browse-layout';
+    }
+    """,
+    Output('marker-layout-row', 'className'),
+    Input('marker-left-panel-minimized', 'data'),
+)
