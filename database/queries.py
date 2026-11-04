@@ -268,6 +268,7 @@ def get_marker_details(db: DatabaseManager, marker_id: str) -> Dict[str, Any]:
             mk.position_end,
             c.chromosome_name,
             s.name as species_name,
+            s.common_name as species_common_name,
             s.id as species_id
         FROM markers mk
         JOIN chromosomes c ON mk.chromosome_id = c.id

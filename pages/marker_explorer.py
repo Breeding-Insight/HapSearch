@@ -380,6 +380,15 @@ def show_marker_details(n_clicks, navigate_data, _species_id, current_marker_id)
     return placeholder_view, None, no_update
 
 
+def msa_image_filename(marker):
+    """Name a saved MSA image after the species and marker,
+    e.g. multiple-sequence-alignment-pecanChr01_000347990."""
+    species = marker.get('species_common_name') or marker.get('species_name') or ''
+    species = re.sub(r'[^a-z0-9]', '', species.lower())
+    marker_id = re.sub(r'[^A-Za-z0-9._-]', '_', str(marker.get('marker_id') or ''))
+    return f"multiple-sequence-alignment-{species}{marker_id}"
+
+
 def create_marker_detail_view(marker_id):
     """Create detailed view of a marker"""
     if not marker_id:
@@ -453,7 +462,11 @@ def create_marker_detail_view(marker_id):
                     dcc.Graph(
                         id='msa-graph',
                         figure=loading_fig,
-                        config={'displayModeBar': True, 'displaylogo': False}
+                        config={
+                            'displayModeBar': True,
+                            'displaylogo': False,
+                            'toImageButtonOptions': {'filename': msa_image_filename(marker)},
+                        }
                     )
                 ], className="msa-results-loading-region"),
                 id='marker-msa-results-loading',
