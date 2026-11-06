@@ -1,6 +1,6 @@
 # HapSearch
 
-<img src="static/brand/hapsearch-logo.png" alt="HapSearch logo" width="160">
+<img src="static/brand/hapsearch-wordmark.png" alt="HapSearch" width="272">
 
 **Find useful microhaplotypes, understand where they occur, and connect them to the breeding programs and people who can put them to work.**
 
