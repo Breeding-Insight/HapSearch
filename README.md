@@ -8,7 +8,7 @@ HapSearch is a web-based exploration platform for microhaplotype data in special
 
 Microhaplotypes are short genomic regions containing multiple nearby variants observed together. Their allelic diversity and local phase information make them useful for characterizing germplasm, tracking trait-associated variation, and designing crosses.
 
-## Why HapSearch?
+## Why should I use HapSearch?
 
 Microhaplotype data is often scattered across spreadsheets, local databases, and analysis scripts. HapSearch connects these sources so breeders and researchers can find the microhaplotypes, samples, and collaborators relevant to their work.
 
