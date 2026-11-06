@@ -1,55 +1,38 @@
 # HapSearch
 
-![HapSearch logo](static/HaploSearch_logo_main_2.png)
+<img src="static/brand/hapsearch-wordmark.png" alt="HapSearch" width="272">
 
 **Find useful microhaplotypes, understand where they occur, and connect them to the breeding programs and people who can put them to work.**
 
-HapSearch is a web-based exploration platform for microhaplotype data in specialty crop breeding. It brings marker sequences, variants, samples, projects, and collaborator information into one searchable interface.
+HapSearch is a web-based exploration platform for microhaplotype data in specialty crop breeding, hosted by [Breeding Insight](https://breedinginsight.org/) at **[hapsearch.breedinginsight.org](https://hapsearch.breedinginsight.org/)**. It brings marker sequences, variants, samples, projects, and collaborator information into one searchable interface.
 
 Microhaplotypes are short genomic regions containing multiple nearby variants observed together. Their allelic diversity and local phase information make them useful for characterizing germplasm, tracking trait-associated variation, and designing crosses.
 
-## Why HapSearch?
+## Why should I use HapSearch?
 
-Microhaplotype data is often scattered across spreadsheets, local databases, and analysis scripts. HapSearch connects these sources so breeders and researchers can answer practical questions:
-
-- Which haplotypes occur in elite parents or breeding populations?
-- Does a marker distinguish the alleles surrounding a target SNP?
-- Which samples carry a rare or useful microhaplotype?
-- Which projects and collaborators hold relevant germplasm?
-- Where are the gaps in coverage for a crop?
+Microhaplotype data is often scattered across spreadsheets, local databases, and analysis scripts. HapSearch connects these sources so breeders and researchers can find the microhaplotypes, samples, and collaborators relevant to their work.
 
 ## Capabilities
 
-- Summarize microhaplotype coverage across species, chromosomes, samples, and projects
-- Search and explore microhaplotypes by marker, sequence, chromosome, sample, or project
-- Compare aligned sequences and visualize SNP and indel annotations
-- Connect microhaplotypes to samples, breeding projects, institutions, and collaborators
-- Analyze microhaplotype accumulation and sharing across projects
-- Import FASTA, metadata, presence/absence, project, and variant data
-- Authenticate users through ORCID against an allowlist
-
-HapSearch is designed for breeders, quantitative geneticists, researchers, data curators, bioinformaticians, and project collaborators.
+- **Filter by Programs**: browse breeding programs and projects, their PIs and institutions, and the microhaplotypes they hold
+- **Microhaplotypes**: search by full Clone ID, chromosome, or sample, see which samples carry a microhaplotype, and save that sample list as CSV
+- **Multiple Sequence Alignment**: view each microhaplotype aligned to its locus reference exactly as [BIGr](https://github.com/Breeding-Insight/BIGr) and [BIGapp](https://github.com/Breeding-Insight/BIGapp) align it, with SNP and indel annotation
+- **Database Overview**: summarize coverage across species, chromosomes, samples, and projects, and export microhaplotype accumulation and sharing curves as PNG, JPEG, or SVG
 
 ## Project overview
 
-HapSearch is built with Python, Flask, Dash, Plotly, BioPython, and SQLite. The repository includes the web application, database layer, data-import tools, alignment utilities, and automated tests.
+HapSearch is built with Python, Flask, Dash, Plotly, BioPython, and SQLite. Microhaplotype alignments are computed in R (Bioconductor `pwalign`) when the database is built.
 
-```text
-alignment/   Sequence alignment and variant annotation
-auth/        ORCID authentication and sessions
-database/    Data access and presence/absence bitmaps
-pages/       Dash views and exploration workflows
-scripts/     Database initialization and data imports
-tests/       Automated tests
-```
+## Data
 
-## Setup and development
+All data lives in one SQLite file built by `scripts/build_database.py` from the species data repositories listed in `data_sources.toml`, such as [alfalfa_haplotype_db](https://github.com/Breeding-Insight/alfalfa_haplotype_db). To publish new data, see:
 
-All data lives in one SQLite file (`data/hapsearch.db` by default), rebuilt with `scripts/build_database.py` from the inputs in [alfalfa_haplotype_db](https://github.com/Breeding-Insight/alfalfa_haplotype_db) (see [Updating data](docs/updating-data.md)). Local development requires Python 3.13+; the Docker Compose files mount the database read-write. In production the file ships read-only inside the container image on Google Cloud Run. See the [Cloud Run deployment guide](docs/cloud-run.md) and [.env example](.env.example) for configuration details.
-
-## Documentation
-
-- [Product plan and roadmap](HaploSearch_Plan_Document.md)
 - [Updating data and publishing a new version](docs/updating-data.md)
-- [Cloud Run deployment](docs/cloud-run.md)
-- [Visualization color system](design/color_palettes.md)
+- [Data repository manifest example](docs/manifest.example.toml)
+- [Configuration example](.env.example)
+
+Run the automated tests with `pytest`.
+
+## License
+
+HapSearch is released under the [Apache License 2.0](LICENSE).
