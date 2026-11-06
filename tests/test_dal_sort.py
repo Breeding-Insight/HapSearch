@@ -12,6 +12,9 @@ class ParseDalKeyTests(unittest.TestCase):
         desc = "genotyping_source=DAl21-5779_DAl21-6024; raw_header=..."
         self.assertEqual(_parse_dal_key(desc), (21, 5779))
 
+    def test_pecan_description(self):
+        self.assertEqual(_parse_dal_key("genotyping_source=DPec25-10255"), (25, 10255))
+
     def test_no_genotyping_source(self):
         desc = "internal_project_id=P99; raw_header=Validation"
         self.assertIsNone(_parse_dal_key(desc))

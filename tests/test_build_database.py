@@ -2,7 +2,15 @@ import os
 import tempfile
 import unittest
 
-from scripts.build_database import BuildError, fasta_stem, find_manifest, load_plan
+from scripts.build_database import (
+    BuildError,
+    BuildPlan,
+    _missing_hint,
+    check_metadata,
+    fasta_stem,
+    find_manifest,
+    load_plan,
+)
 
 MANIFEST = """
 [metadata]
@@ -82,6 +90,51 @@ class BuildPlanTests(unittest.TestCase):
             find_manifest(self.repo, None), os.path.join(root_hapsearch, "manifest.toml")
         )
 
+    def test_case_only_mismatch_is_pointed_out(self):
+        with open(self.manifest, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(self.manifest, "w", encoding="utf-8") as handle:
+            handle.write(text.replace('"Sample_hapStatus"', '"sample_hapStatus"'))
+
+        if os.path.isdir(os.path.join(self.hapsearch, "sample_hapStatus")):
+            self.skipTest("case-insensitive filesystem")
+        with self.assertRaisesRegex(BuildError, "Did you mean 'Sample_hapStatus'"):
+            load_plan(self.repo, os.path.join(self.repo, ".cache"))
+
+    def test_missing_folder_lists_what_exists(self):
+        with open(self.manifest, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(self.manifest, "w", encoding="utf-8") as handle:
+            handle.write(text.replace('"Sample_hapStatus"', '"Samples"'))
+
+        with self.assertRaisesRegex(BuildError, "contains: .*Sample_hapStatus.*hapPA"):
+            load_plan(self.repo, os.path.join(self.repo, ".cache"))
+
+    def test_hint_flags_case_only_differences(self):
+        hint = _missing_hint(os.path.join(self.hapsearch, "sample_hapstatus"), self.repo)
+
+        self.assertIn("Did you mean 'Sample_hapStatus'", hint)
+
+    def test_unquoted_comma_in_contacts_names_the_file_and_line(self):
+        mapping = os.path.join(self.hapsearch, "HapSearch_mapping.csv")
+        contacts = os.path.join(self.hapsearch, "HapSearch_owner_contacts.csv")
+        with open(mapping, "w", encoding="utf-8") as handle:
+            handle.write("genotyping_source,project_code,owner_name\nDAl21-6679,P01,Jane Doe\n")
+        with open(contacts, "w", encoding="utf-8") as handle:
+            handle.write("Full Name,Employer,Primary Location\n"
+                         'Jane Doe,USDA,"St. Paul, MN"\n'
+                         "John Roe,Cornell University,Ithaca, NY\n")
+        plan = BuildPlan(manifest_path=self.manifest, project_mapping=mapping,
+                         owner_contacts=contacts, species=[], max_skipped_allele_fraction=0.02)
+
+        with self.assertRaises(BuildError) as raised:
+            check_metadata(plan, self.repo)
+
+        message = str(raised.exception)
+        self.assertIn("owner contacts file alfalfa/data/hapSearch/HapSearch_owner_contacts.csv", message)
+        self.assertIn("line 3 has 4 fields but the header has 3", message)
+        self.assertNotIn("Cornell", message)  # no personal details in build logs
+
     def test_missing_repo_is_explained(self):
         with self.assertRaisesRegex(BuildError, "Data repository not found"):
             find_manifest(os.path.join(self.repo, "missing"), None)
@@ -158,6 +211,65 @@ class PatternManifestTests(BuildPlanTests):
 
     def test_fasta_stem_strips_compound_extensions(self):
         self.assertEqual(fasta_stem("/x/alfalfa_allele_db_v055.fa.gz"), "alfalfa_allele_db_v055")
+
+
+VERSION_MANIFEST = """
+[metadata]
+project_mapping = "HapSearch_mapping.csv"
+owner_contacts = "HapSearch_owner_contacts.csv"
+
+[[species]]
+name = "Medicago sativa"
+fasta = "/db/alfalfa_allele_db_{version}.fa"
+project_presence = "hapPA/{fasta}_hapPA_matrix.csv"
+"""
+
+
+class VersionPinTests(PatternManifestTests):
+    """The FASTA version (e.g. v055) selects the FASTA and its matrix."""
+
+    def setUp(self):
+        super().setUp()
+        # Look-alike files that must never be picked as a version.
+        for name in ("alfalfa_allele_db_v016_81bp.fa", "alfalfa_allele_db_v042_ActualAmpliconSeq.fa",
+                     "alfalfa_allele_db_v100.fa.self.bn"):
+            self._touch(os.path.join(self.repo, "db", name))
+        self._write_manifest(VERSION_MANIFEST)
+
+    def _plan(self, version=None):
+        return load_plan(self.repo, os.path.join(self.repo, ".cache"), version=version)
+
+    # Inherited pattern tests use a different manifest.
+    test_case_only_mismatch_is_pointed_out = None
+    test_missing_folder_lists_what_exists = None
+    test_newest_fasta_and_its_matrix_are_chosen = None
+    test_newest_fasta_without_matrix_stops_the_build = None
+    test_pinned_fasta_selects_matching_matrix = None
+    test_ambiguous_single_file_pattern_stops_the_build = None
+
+    def test_pinned_version_selects_fasta_and_matrix(self):
+        species = self._plan("v054").species[0]
+
+        self.assertEqual(os.path.basename(species.fasta), "alfalfa_allele_db_v054.fa")
+        self.assertEqual(
+            [os.path.basename(path) for path in species.project_presence],
+            ["alfalfa_allele_db_v054_hapPA_matrix.csv"],
+        )
+
+    def test_unpinned_uses_newest_real_version(self):
+        species = self._plan().species[0]
+
+        self.assertEqual(os.path.basename(species.fasta), "alfalfa_allele_db_v100.fa")
+
+    def test_missing_version_lists_what_exists(self):
+        with self.assertRaisesRegex(BuildError, "version v056 not found.*v100"):
+            self._plan("v056")
+
+    def test_version_needs_placeholder_in_manifest(self):
+        self._write_manifest(VERSION_MANIFEST.replace("{version}", "v054"))
+
+        with self.assertRaisesRegex(BuildError, "no \\{version\\} placeholder"):
+            self._plan("v054")
 
 
 if __name__ == "__main__":

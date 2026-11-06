@@ -14,21 +14,27 @@ stored image and Firestore storage.
    and AlloMate:
 
    ```bash
-   git clone --branch cloud_run https://github.com/Breeding-Insight/HapSearch.git
+   git clone --branch feature-MSA https://github.com/Breeding-Insight/HapSearch.git
    cd HapSearch && bash scripts/setup_cloud_run.sh
    ```
 
    It is safe to re-run. It creates the Artifact Registry repository (keeping the
    last 5 images), the `hapsearch-db` Firestore database, the app and Cloud Build
    service accounts with only the roles below, and the secrets. It copies the
-   shared ORCID credentials from AlloMate's or HapApp's secrets when present, asks
-   for a read-only GitHub token for the data repository, and can add the first
-   allowlisted user.
-2. **Connect GitHub and create the trigger** in Cloud Build (the script prints the
-   exact settings): manual invocation, `Breeding-Insight/HapSearch`, `cloudbuild.yaml`,
-   service account `hapsearch-cloud-build`.
-3. **Run the trigger.** The first run creates the service, fully configured.
-4. **Add the ORCID redirect URI** `https://hapsearch-PROJECT_NUMBER.us-west1.run.app/auth/callback`
+   shared ORCID credentials from AlloMate's or HapApp's secrets when present, and
+   can add the first allowlisted user.
+2. **Connect GitHub to Cloud Build** (Repositories → 2nd gen, region `us-west1`,
+   connection name `github`). This installs the "Google Cloud Build" GitHub App on
+   Breeding-Insight; an org owner may need to approve it. Link both
+   `Breeding-Insight/HapSearch` and `Breeding-Insight/alfalfa_haplotype_db`. Builds
+   read the data repository through this connection with short-lived read-only
+   tokens, so no personal GitHub token is stored and nothing expires.
+3. **Create the trigger** (the script prints the exact settings): manual invocation,
+   repository `Breeding-Insight-HapSearch`, branch `feature-MSA`, `cloudbuild.yaml`,
+   service account `hapsearch-cloud-build`. Each data repository's link name must
+   match its `link` in `data_sources.toml` (`Breeding-Insight-alfalfa_haplotype_db`).
+4. **Run the trigger.** The first run creates the service, fully configured.
+5. **Add the ORCID redirect URI** `https://hapsearch-PROJECT_NUMBER.us-west1.run.app/auth/callback`
    to the shared BI ORCID application, then open `/health` and sign in.
 
 ## How the data gets into the image
@@ -36,7 +42,8 @@ stored image and Firestore storage.
 The database is rebuilt from scratch from the files in
 `Breeding-Insight/alfalfa_haplotype_db` and baked into the image. Cloud Build
 does this on every run (`cloudbuild.yaml`): clone the data repository at a tag,
-run `scripts/build_database.py`, build the image, deploy. Cloud Run switches
+run `scripts/build_database.py` (which also aligns every microhaplotype to its
+Ref in R with BIGr's settings), build the image, deploy. Cloud Run switches
 revisions atomically, so visitors never see a half-updated database. See
 [updating-data.md](updating-data.md) for adding data and publishing.
 
@@ -117,33 +124,59 @@ stops with a clear message if the database name or IAM role is wrong.
 - `roles/secretmanager.secretAccessor` on the session key and ORCID secrets
 
 and `hapsearch-cloud-build`, the trigger's identity, with `roles/run.admin`,
-`roles/artifactregistry.writer`, `roles/logging.logWriter`, permission to deploy as
-`hapsearch-cloud-run`, and access to the `hapsearch-github-token` secret only. No JSON
-keys are created.
+`roles/artifactregistry.writer`, `roles/logging.logWriter`,
+`roles/cloudbuild.readTokenAccessor` (read-only tokens for linked repositories), and
+permission to deploy as `hapsearch-cloud-run`. No JSON keys or GitHub tokens are
+created.
 
 ## Service settings
 
 - container port: `8080` (the image honors the injected `PORT`)
 - minimum instances: `0`, with startup CPU boost
 - request-based billing (`--cpu-throttling`)
-- CPU `1`, memory `1 GiB`: each of the two Gunicorn workers peaks around 220 MB
-  with every presence bitmap cached (measured on a Mac with the current data)
+- CPU `1`, memory `1 GiB`: each of the two Gunicorn workers uses about 135 MB for
+  the app itself plus at most `PRESENCE_CACHE_MAX_MB` (default 100) of cached
+  presence bitmaps; all of alfalfa v055 is about 22 MB (measured on a Mac). Past
+  the limit, the least recently used bitmaps are re-read from SQLite when needed,
+  so adding species does not grow memory. Raise it with `--update-env-vars` if
+  Cloud Run's memory metric has room and cache misses slow pages down.
 - public ingress; access to `/app/` is controlled by ORCID sign-in
 - `GET /health` answers `200` without touching the database, for the landing page's
   wake-up script; `/robots.txt` disallows all crawling
 
 These settings, the environment variables and the secret references all live in
-the deploy step of `cloudbuild.yaml`, so every run applies them. Set
-`_LANDING_URL` on the trigger once the GitHub Pages landing page exists.
+the deploy step of `cloudbuild.yaml`, so every run applies them. `_LANDING_URL`
+defaults to the GitHub Pages landing page; override it on the trigger only if the
+page moves.
 
 Cloud Run terminates HTTPS, so keep `TLS_ENABLED=false`. The ORCID redirect URI must be
 `https://YOUR-SERVICE-URL/auth/callback`.
 
 ## Landing page
 
-Signed-out visitors to `/` are redirected to `HAPSEARCH_LANDING_URL` (when it is empty,
-the built-in landing page is served as before). The BI pattern puts that page on GitHub
-Pages with the shared `wake.js` script; see the HapApp and AlloMate `landing/` folders.
+The public landing page is the static site in `landing/`, published to GitHub Pages by
+`.github/workflows/pages.yml` on every push to `feature-MSA` that changes it. It follows the
+Breeding Insight pattern shared with HapApp and AlloMate: its sign-in links point at the
+Cloud Run service, and `landing/assets/wake.js` wakes the service through `/health` when a
+visitor clicks one, showing a "Starting HapSearch…" state during a cold start. Keep
+`wake.js` identical to the copies in the other BI app repositories.
+
+The service URL appears three times in `landing/index.html` (both sign-in links and the
+`wake.js` script tag); update all three together if it changes.
+
+To set it up once:
+
+1. In the GitHub repository, set **Settings → Pages → Source** to **GitHub Actions**.
+2. Merge into `feature-MSA` (which runs the workflow) and note the published URL, e.g.
+   `https://breeding-insight.github.io/HapSearch/`.
+3. If the published URL is not `https://breeding-insight.github.io/HapSearch/`, set
+   `_LANDING_URL` on the Cloud Build trigger to it and redeploy.
+
+The service serves no landing page of its own. `/` sends signed-in users to `/app/`
+and signed-out visitors to `HAPSEARCH_LANDING_URL`, and signing out goes there too.
+When `HAPSEARCH_LANDING_URL` is empty (as in local development), `/` goes straight to
+ORCID sign-in, so signing out while still signed in to ORCID signs you straight back
+in.
 
 ## Known limits
 

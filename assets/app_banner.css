@@ -1,4 +1,4 @@
-/* App banner - matches landing page hero section */
+/* App header and footer - follow the landing page (landing/index.html). */
 :root {
     --bs-secondary-color: #000000;
     --bs-secondary-rgb: 0, 0, 0;
@@ -12,133 +12,178 @@ a.text-secondary {
     color: #000000 !important;
 }
 
-.app-hero-section {
-    padding: 6px 0 4px;
-    background: #ffffff;
-    margin-bottom: 0;
-    border-bottom: 1px solid #e9ecef;
-}
-
-/* Top row: logo+title on left, user controls on right — same baseline */
-.app-hero-top-row {
+/* Header: Breeding Insight logo | HapSearch logo and wordmark ... stats, user.
+   The layout container has 1.5rem padding (p-4); the header and footer bleed
+   past it to the window edges. */
+.app-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    min-height: 72px;
+    margin: -1.5rem -1.5rem 1.25rem;
+    padding: 10px 1.5rem;
+    background: var(--app-surface, #ffffff);
+    border-bottom: 1px solid var(--app-border, #d3e0e1);
 }
 
-/* Left group: logo + title inline */
-.app-hero-left {
+.app-header-left {
     display: flex;
     align-items: center;
-    gap: 15px;
+    gap: 14px;
 }
 
-.app-hero-icon {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-}
-
-.app-hero-icon img {
-    height: 4rem;
-    width: auto;
-    border-radius: 12px;
+.app-bi-logo {
     display: block;
+    width: 150px;
+    height: auto;
 }
 
-.app-hero-title {
-    font-size: 2.25rem;
-    font-weight: 400;
-    color: #212529;
-    margin: 0;
-    white-space: nowrap;
+.app-brand-divider {
+    width: 1px;
+    height: 32px;
+    background: var(--app-border, #d3e0e1);
 }
 
-.app-hero-title .hero-bold {
-    font-weight: 700;
-}
-
-/* Right group: user / settings / logout */
-.app-hero-right {
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    justify-content: center;
-    gap: 2px;
-}
-
-.app-hero-user-line {
+.app-brand {
     display: flex;
     align-items: center;
-    gap: 4px;
-    color: #212529;
-    font-size: 0.9rem;
-    white-space: nowrap;
-}
-
-.app-hero-user-line a {
-    color: #245842;
+    gap: 10px;
     text-decoration: none;
 }
 
-.app-hero-user-line a:hover {
+.app-brand img {
+    display: block;
+    height: 48px;
+    width: auto;
+}
+
+.app-name {
+    font-size: 1.375rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+}
+
+/* Wordmark colors match the logo (and HapApp's wordmark). */
+.app-name .wm-hap { color: #115c55; }
+.app-name .wm-search { color: #25a244; }
+
+.app-header-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    font-size: 0.875rem;
+}
+
+.app-header-stats .text-muted {
+    color: var(--app-ink-muted, #4a5663) !important;
+}
+
+.app-header-user {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--app-ink, #1b2733);
+    white-space: nowrap;
+}
+
+.app-header-sep {
+    color: var(--app-border, #d3e0e1);
+    margin: 0 4px;
+}
+
+.app-header-user a {
+    color: var(--app-teal, #066a73);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.app-header-user a:hover {
+    color: var(--app-teal-strong, #054f56);
     text-decoration: underline;
 }
 
-/* Subtitle below the top row */
-.app-hero-subtitle {
-    font-size: 1rem;
-    color: #000;
-    margin: 0.5rem 0 0 0;
-}
-
 @media (max-width: 768px) {
-    .app-hero-top-row {
-        flex-direction: column;
+    .app-header-right {
         align-items: flex-start;
     }
 
-    .app-hero-title {
-        font-size: 2rem;
-    }
-
-    .app-hero-right {
-        width: 100%;
-        align-items: flex-start;
+    .app-bi-logo {
+        width: 120px;
     }
 }
 
-/* App footer - matches landing page footer */
+/* Footer */
 .app-footer {
-    padding: 40px 0;
-    background-color: #ffffff;
-    border-top: 1px solid #e9ecef;
-    margin-top: 1.5rem;
+    margin: 2rem -1.5rem -1.5rem;
+    padding: 48px 1.5rem 32px;
+    background: var(--app-footer-bg, #0c3237);
+    color: #ffffff;
 }
 
-.app-footer-logos {
+.app-partner-logos {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 40px;
     flex-wrap: wrap;
-    margin-bottom: 20px;
+    gap: 28px 48px;
+    list-style: none;
+    margin: 0 0 32px;
+    padding: 0;
 }
 
-.app-footer-logos img {
-    height: 50px;
+.app-partner-logos img {
+    display: block;
+    height: 44px;
     width: auto;
-    object-fit: contain;
 }
 
-.app-footer-text {
+.app-partner-logos .logo-bi img {
+    height: 56px;
+}
+
+.app-partner-logos .logo-ifas img {
+    filter: brightness(0) invert(1);
+}
+
+.app-funding {
     text-align: center;
-    color: #000;
-    margin-top: 20px;
+    max-width: 70ch;
+    margin: 0 auto 24px;
 }
 
-.app-footer-text small {
-    color: #000;
+.app-footer-bottom {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding-top: 20px;
+    border-top: 1px solid rgba(201, 220, 221, 0.35);
+    color: var(--app-footer-muted, #c9dcdd);
+    font-size: 0.9rem;
+}
+
+.app-footer-bottom p {
+    margin: 0;
+}
+
+.app-footer-bottom ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.app-footer a {
+    color: #ffffff;
+}
+
+.app-footer a:hover {
+    color: var(--app-footer-muted, #c9dcdd);
 }

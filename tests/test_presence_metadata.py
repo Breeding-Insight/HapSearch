@@ -27,6 +27,18 @@ class PresenceMetadataTests(unittest.TestCase):
         self.assertTrue(ctx["is_validation"])
         self.assertEqual(ctx["genotyping_source"], "DAl21-5779_DAl21-6024")
 
+    def test_pecan_sample_file_token(self):
+        ctx = parse_sample_filename_context("/tmp/DPec25-10255_MADC_snpID_rename_hapStatus.csv")
+        self.assertEqual(ctx["genotyping_source"], "DPec25-10255")
+
+    def test_pecan_project_header(self):
+        parsed = parse_project_header("Wilson Hican_DPec23-8107")
+        self.assertEqual(parsed["genotyping_source"], "DPec23-8107")
+
+    def test_word_starting_with_d_is_not_a_token(self):
+        ctx = parse_sample_filename_context("/tmp/Dumbell-12_Debby-3_hapStatus.csv")
+        self.assertEqual(ctx["genotyping_source"], "")
+
     def test_missing_fields_warn_blank(self):
         with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as handle:
             handle.write("genotyping_source,project_code,owner_name\nDAl21-6679,P01_Debby_Zhanyou_digestibility_16plates_DAl21-6679,Debby\n")
@@ -156,6 +168,7 @@ class PresenceMetadataTests(unittest.TestCase):
             normalize_project_code("P07_Debby-winterSurv_16plates_DAl22-7513"),
             "P07_Debby_winterSurv_16plates_DAl22-7513",
         )
+        self.assertEqual(normalize_project_code("P01_Pecan-trial_DPec23-8107"), "P01_Pecan_trial_DPec23-8107")
 
     def test_get_mapping_for_project_code_dash_underscore_equivalence(self):
         mapping = {

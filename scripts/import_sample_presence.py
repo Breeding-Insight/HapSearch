@@ -24,8 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.db_manager import DatabaseManager, get_or_create_species
 from database.presence_artifacts import (
-    counts_by_microhaplotype,
+    counts_from_matrix,
     ensure_presence_artifact_schema,
+    entity_presence_matrix,
     upsert_presence_summary,
     write_presence_artifact,
 )
@@ -52,6 +53,20 @@ DEFAULT_OWNER_CONTACTS_PATH = os.path.join(
 
 # pandas reads gzipped matrices directly, so inputs can be stored compressed.
 PRESENCE_FILE_SUFFIXES = ('.csv', '.csv.gz', '.tsv', '.tsv.gz')
+
+
+def normalize_sample_code(value) -> str:
+    """Sample name from a presence-file header, without surrounding quotes.
+
+    Some sample files wrap names that contain spaces in literal quote marks
+    (the CSV header field is the name between three double quotes on each
+    side), so pandas reads the quotes as part of the name, e.g.
+    '"1_1-Parent P53V08"'. One matching pair of surrounding quotes is removed.
+    """
+    code = str(value).strip()
+    if len(code) >= 2 and code[0] == code[-1] and code[0] in "\"'":
+        code = code[1:-1].strip()
+    return code
 
 
 class PresenceImporter:
@@ -120,7 +135,7 @@ class PresenceImporter:
 
         if not source_key:
             raise ValueError(
-                f"No DAI/DAl token found in sample-level file name: {os.path.basename(csv_path)}"
+                f"No DArT order token (DAl..., DPec...) found in sample-level file name: {os.path.basename(csv_path)}"
             )
 
         # Validation files with multiple DAI tags should remain grouped.
@@ -301,23 +316,9 @@ class PresenceImporter:
                 print("\nCancelled.")
                 return None
 
-    def get_or_create_sample(self, sample_code: str, project_id: int, 
-                            species_id: int, cursor) -> tuple:
-        """Get sample ID or create if doesn't exist
-        
-        Returns:
-            tuple: (sample_id, was_created) where was_created is True if sample was just created
-        """
-        # Check if exists
-        cursor.execute(
-            "SELECT id FROM samples WHERE sample_code = ?",
-            (sample_code,)
-        )
-        result = cursor.fetchone()
-        if result:
-            return (result[0], False)
-        
-        # Create new sample
+    def create_sample(self, sample_code: str, project_id: int,
+                      species_id: int, cursor) -> int:
+        """Insert a sample and return its ID."""
         cursor.execute(
             """
             INSERT INTO samples
@@ -326,7 +327,18 @@ class PresenceImporter:
             """,
             (sample_code, project_id, species_id)
         )
-        return (int(cursor.lastrowid), True)
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def rep_sample_code(sample_code: str, cursor) -> str:
+        """First free '<sample_code>_rep<N>' name, starting at _rep2."""
+        rep = 2
+        while True:
+            candidate = f"{sample_code}_rep{rep}"
+            cursor.execute("SELECT 1 FROM samples WHERE sample_code = ?", (candidate,))
+            if not cursor.fetchone():
+                return candidate
+            rep += 1
 
     def validate_haplotype_exists(self, haplotype_name: str) -> bool:
         """Check if haplotype_name exists in microhaplotypes table"""
@@ -356,6 +368,9 @@ class PresenceImporter:
         if len(df.columns) < 2:
             raise ValueError("CSV must have at least 2 columns (AlleleID + at least one sample)")
 
+        # Clean the sample headers on the frame itself, so the cleaned names
+        # are both what is stored and what selects the columns below.
+        df.columns = [df.columns[0]] + [normalize_sample_code(col) for col in df.columns[1:]]
         allele_id_col = df.columns[0]
         sample_columns = df.columns[1:].tolist()
 
@@ -380,6 +395,7 @@ class PresenceImporter:
         skipped_alleles = 0
         skipped_samples = 0
         created_samples = 0
+        rep_samples = []
         errors = 0
 
         def chunked(items, size):
@@ -388,8 +404,8 @@ class PresenceImporter:
 
         in_clause_chunk = 400
 
-        # Normalize sample headers once and preserve order.
-        sample_columns = [str(col).strip() for col in sample_columns if str(col).strip()]
+        # Drop empty sample headers, preserving order.
+        sample_columns = [col for col in sample_columns if col]
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
@@ -421,33 +437,37 @@ class PresenceImporter:
 
             if verbose:
                 print("Phase 2/3: Resolving/creating sample IDs...", flush=True)
-            sample_id_map = {}
-            if sample_columns:
-                for sample_chunk in chunked(sample_columns, in_clause_chunk):
-                    placeholders = ",".join(["?"] * len(sample_chunk))
-                    cursor.execute(
-                        f"SELECT id, sample_code FROM samples WHERE sample_code IN ({placeholders})",
-                        tuple(sample_chunk)
-                    )
-                    for row in cursor.fetchall():
-                        sample_id_map[str(row[1])] = int(row[0])
-
-            missing_samples = [s for s in sample_columns if s not in sample_id_map]
-            for sample_code in missing_samples:
-                sample_id, was_created = self.get_or_create_sample(
-                    sample_code, project_id, species_id, cursor
+            # A name already stored came from an earlier sample file. Treat this
+            # column as another rep of that sample rather than merging the two:
+            # it gets its own sample, '<name>_rep2', '<name>_rep3', ...
+            existing_codes = set()
+            for sample_chunk in chunked(sample_columns, in_clause_chunk):
+                placeholders = ",".join(["?"] * len(sample_chunk))
+                cursor.execute(
+                    f"SELECT sample_code FROM samples WHERE sample_code IN ({placeholders})",
+                    tuple(sample_chunk)
                 )
-                if sample_id:
-                    sample_id_map[sample_code] = int(sample_id)
-                    if was_created:
-                        created_samples += 1
-                else:
-                    skipped_samples += 1
+                existing_codes.update(str(row[0]) for row in cursor.fetchall())
+
+            sample_id_map = {}
+            for sample_code in sample_columns:
+                stored_code = sample_code
+                if sample_code in existing_codes:
+                    stored_code = self.rep_sample_code(sample_code, cursor)
+                    rep_samples.append((sample_code, stored_code))
+                sample_id_map[sample_code] = self.create_sample(
+                    stored_code, project_id, species_id, cursor
+                )
+                created_samples += 1
             if verbose:
                 print(
-                    f"  Ready {len(sample_id_map):,} samples ({created_samples:,} created)",
+                    f"  Ready {len(sample_id_map):,} samples ({created_samples:,} created, "
+                    f"{len(rep_samples):,} stored as reps)",
                     flush=True
                 )
+            # Printed even with --quiet so build logs record every rename.
+            for sample_code, stored_code in rep_samples:
+                print(f"  Repeated sample '{sample_code}' stored as '{stored_code}'", flush=True)
 
             sample_ids = sorted(set(sample_id_map[s] for s in sample_columns if s in sample_id_map))
             mh_ids_in_file = sorted(haplotype_id_map.values())
@@ -462,35 +482,40 @@ class PresenceImporter:
             valid_sample_mask = sample_id_array > 0
             allele_series = df[allele_id_col].astype(str).str.strip()
 
-            pairs = []
-            for idx, allele_id in enumerate(allele_series):
-                if not allele_id:
-                    continue
-                microhaplotype_id = haplotype_id_map.get(allele_id)
-                if not microhaplotype_id:
-                    skipped_alleles += 1
-                    if verbose and skipped_alleles <= 10:
-                        print(f"Warning: AlleleID '{allele_id}' not found in microhaplotypes, skipping", flush=True)
-                    continue
-                present_indices = np.flatnonzero(presence_matrix[idx] & valid_sample_mask)
-                for pos in present_indices.tolist():
-                    pairs.append((microhaplotype_id, int(sample_id_array[pos])))
-
+            # Each row's microhaplotype id (-1 for blank or unknown AlleleIDs).
+            # The presence matrix is then packed with NumPy rather than one
+            # (allele, sample) pair at a time, which dominated build time.
+            row_mh_ids = np.array(
+                [haplotype_id_map.get(allele_id, -1) if allele_id else -1 for allele_id in allele_series],
+                dtype=np.int64,
+            )
+            unknown = [allele_id for allele_id in allele_series if allele_id and allele_id not in haplotype_id_map]
+            skipped_alleles += len(unknown)
             if verbose:
-                print(f"  Built {len(pairs):,} presence pairs", flush=True)
+                for allele_id in unknown[:10]:
+                    print(f"Warning: AlleleID '{allele_id}' not found in microhaplotypes, skipping", flush=True)
+
+            valid_rows = row_mh_ids > 0
+            imported_count = int(presence_matrix[np.ix_(valid_rows, valid_sample_mask)].sum())
+            entity_matrix = entity_presence_matrix(
+                presence_matrix, row_mh_ids, sample_id_array, mh_ids_in_file, sample_ids,
+            )
+            if verbose:
+                print(f"  Read {imported_count:,} presence entries", flush=True)
 
             if verbose:
                 print("  Writing sample presence bitmaps...", flush=True)
             ensure_presence_artifact_schema(cursor)
             metadata = write_presence_artifact(
                 cursor,
-                pairs,
+                None,
                 mh_ids_in_file,
                 sample_ids,
                 entity_type="sample",
                 species_id=species_id,
                 project_id=project_id,
                 source_path=csv_path,
+                matrix=entity_matrix,
             )
             artifact_id = metadata["id"]
             if artifact_id:
@@ -500,13 +525,9 @@ class PresenceImporter:
                     species_id=species_id,
                     entity_type="sample",
                     total_count=len(sample_ids),
-                    counts_by_microhaplotype=counts_by_microhaplotype(
-                        pairs,
-                        mh_ids_in_file,
-                    ),
+                    counts_by_microhaplotype=counts_from_matrix(entity_matrix, mh_ids_in_file),
                 )
             conn.commit()
-            imported_count = len(pairs)
             if verbose:
                 size_mb = (metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
                 print(
@@ -520,6 +541,7 @@ class PresenceImporter:
             print(f"  Imported: {imported_count} new presence records", flush=True)
             print(f"  Deleted: {deleted_count} stale presence records", flush=True)
             print(f"  Created: {created_samples} new samples", flush=True)
+            print(f"  Repeated samples stored as _rep#: {len(rep_samples)}", flush=True)
             print(f"  Skipped alleles (not found): {skipped_alleles}", flush=True)
             print(f"  Skipped samples: {skipped_samples}", flush=True)
             print(f"  Total time: {total_elapsed:.1f}s", flush=True)
@@ -530,6 +552,7 @@ class PresenceImporter:
             'imported': imported_count,
             'deleted': deleted_count,
             'created_samples': created_samples,
+            'rep_samples': len(rep_samples),
             'skipped_alleles': skipped_alleles,
             'skipped_samples': skipped_samples,
             'errors': errors
@@ -674,6 +697,7 @@ Example:
             'imported': 0,
             'deleted': 0,
             'created_samples': 0,
+            'rep_samples': 0,
             'skipped_alleles': 0,
             'skipped_samples': 0,
             'errors': 0
@@ -709,6 +733,7 @@ Example:
         print(f"  Imported: {aggregate['imported']}", flush=True)
         print(f"  Deleted stale: {aggregate['deleted']}", flush=True)
         print(f"  Created samples: {aggregate['created_samples']}", flush=True)
+        print(f"  Repeated samples stored as _rep#: {aggregate['rep_samples']}", flush=True)
         print(f"  Skipped alleles: {aggregate['skipped_alleles']}", flush=True)
         print(f"  Skipped samples: {aggregate['skipped_samples']}", flush=True)
         print(f"  Errors: {aggregate['errors']}", flush=True)

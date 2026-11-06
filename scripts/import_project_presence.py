@@ -29,8 +29,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.db_manager import DatabaseManager
 from database.presence_artifacts import (
-    counts_by_microhaplotype,
+    counts_from_matrix,
     ensure_presence_artifact_schema,
+    entity_presence_matrix,
     upsert_presence_summary,
     write_presence_artifact,
 )
@@ -315,31 +316,30 @@ class ProjectPresenceImporter:
             presence_matrix = numeric_presence.fillna(0).eq(1).to_numpy(dtype=bool)
             allele_series = df[allele_id_col].astype(str).str.strip()
 
-            pairs: List[tuple] = []
-            for idx, allele_id in enumerate(allele_series):
-                if not allele_id:
-                    continue
-                mh_id = haplotype_id_map.get(allele_id)
-                if not mh_id:
-                    continue
-                present_indices = np.flatnonzero(presence_matrix[idx] & valid_project_mask)
-                for pos in present_indices.tolist():
-                    pairs.append((mh_id, int(project_id_array[pos])))
-
+            # Pack with NumPy rather than one (allele, project) pair at a time.
+            row_mh_ids = np.array(
+                [haplotype_id_map.get(allele_id, -1) if allele_id else -1 for allele_id in allele_series],
+                dtype=np.int64,
+            )
+            imported = int(presence_matrix[np.ix_(row_mh_ids > 0, valid_project_mask)].sum())
+            entity_matrix = entity_presence_matrix(
+                presence_matrix, row_mh_ids, project_id_array, mh_ids, proj_ids,
+            )
             if verbose:
-                print(f"  Built {len(pairs):,} presence pairs", flush=True)
+                print(f"  Read {imported:,} presence entries", flush=True)
 
             if verbose:
                 print("  Writing project presence bitmaps...", flush=True)
             ensure_presence_artifact_schema(cursor)
             metadata = write_presence_artifact(
                 cursor,
-                pairs,
+                None,
                 mh_ids,
                 proj_ids,
                 entity_type="project",
                 species_id=artifact_species_id,
                 source_path=csv_path,
+                matrix=entity_matrix,
             )
             artifact_id = metadata["id"]
             if artifact_id and artifact_species_id is not None:
@@ -349,10 +349,9 @@ class ProjectPresenceImporter:
                     species_id=artifact_species_id,
                     entity_type="project",
                     total_count=len(proj_ids),
-                    counts_by_microhaplotype=counts_by_microhaplotype(pairs, mh_ids),
+                    counts_by_microhaplotype=counts_from_matrix(entity_matrix, mh_ids),
                 )
             conn.commit()
-            imported = len(pairs)
             if verbose:
                 size_mb = (metadata.get("artifact_size_bytes") or 0) / 1024 / 1024
                 print(

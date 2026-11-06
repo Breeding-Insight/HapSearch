@@ -1,6 +1,10 @@
 import unittest
 
-from design.colors import APP_PRIMARY_SCALE
+from design.colors import (
+    APP_PRIMARY_SCALE,
+    CHART_CATEGORICAL,
+    CHART_SERIES,
+)
 
 
 def _hex_to_srgb(hex_color):
@@ -26,10 +30,9 @@ def _contrast_ratio(color_a, color_b):
 
 
 class ColorAccessibilityTests(unittest.TestCase):
-    def test_app_primary_scale_uses_expected_foregrounds(self):
-        expected = ["#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff"]
-        actual = [entry["foreground"].lower() for entry in APP_PRIMARY_SCALE]
-        self.assertEqual(actual, expected)
+    def test_app_primary_scale_uses_white_foregrounds(self):
+        for entry in APP_PRIMARY_SCALE:
+            self.assertEqual(entry["foreground"].lower(), "#ffffff")
 
     def test_app_primary_scale_meets_wcag_aa_for_normal_text(self):
         minimum_ratio = 4.5
@@ -43,6 +46,22 @@ class ColorAccessibilityTests(unittest.TestCase):
                     f"foreground={entry['foreground']} ratio={ratio:.2f}"
                 ),
             )
+
+
+class ChartPaletteTests(unittest.TestCase):
+    def test_categorical_palette_has_eight_distinct_hex_colors(self):
+        self.assertEqual(len(CHART_CATEGORICAL), 8)
+        self.assertEqual(len(set(CHART_CATEGORICAL)), 8)
+        for color in CHART_CATEGORICAL:
+            self.assertRegex(color, r"^#[0-9A-F]{6}$")
+
+    def test_categorical_colors_reach_3_to_1_on_the_chart_surface(self):
+        for color in CHART_CATEGORICAL:
+            ratio = _contrast_ratio(color, "#ffffff")
+            self.assertGreaterEqual(ratio, 3.0, msg=f"{color} ratio={ratio:.2f}")
+
+    def test_single_series_color_reaches_3_to_1_on_the_chart_surface(self):
+        self.assertGreaterEqual(_contrast_ratio(CHART_SERIES, "#ffffff"), 3.0)
 
 
 if __name__ == "__main__":

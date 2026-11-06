@@ -40,7 +40,46 @@
     });
   }
 
+  // Set a React-controlled input so Dash sees the change too.
+  function setInputValue(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  // When a Save menu opens, default Width and Height to the chart's size on
+  // screen, so the image matches what is shown (layouts such as the sharing
+  // chart's square cells change shape at other sizes). They can still be edited.
+  function fillOnScreenSize(toggle) {
+    const menu = toggle.closest(".dropdown");
+    const saveButton = menu && menu.querySelector("[data-overview-export-chart]");
+    if (!saveButton) {
+      return;
+    }
+    const chartKey = saveButton.dataset.overviewExportChart;
+    const graph = document.getElementById(saveButton.dataset.overviewExportGraph);
+    const plot = graph && graph.querySelector(".js-plotly-plot");
+    if (!plot || !plot.clientWidth || !plot.clientHeight) {
+      return;
+    }
+    const cssPixelsPerInch = 96;
+    const sizes = { "image-width": plot.clientWidth, "image-height": plot.clientHeight };
+    Object.entries(sizes).forEach(function ([suffix, pixels]) {
+      const input = document.getElementById(`overview-${chartKey}-${suffix}`);
+      if (input) {
+        setInputValue(input, (pixels / cssPixelsPerInch).toFixed(1));
+      }
+    });
+  }
+
   document.addEventListener("click", function (event) {
+    const toggle = event.target.closest(".dropdown-toggle");
+    if (toggle) {
+      // The menu's contents render as it opens.
+      setTimeout(function () { fillOnScreenSize(toggle); }, 0);
+      return;
+    }
+
     const button = event.target.closest("[data-overview-export-chart]");
     if (!button) {
       return;

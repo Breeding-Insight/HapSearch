@@ -2,33 +2,14 @@ FROM python:3.13-slim AS base
 
 WORKDIR /app
 
-# Install system dependencies, build tools, and alignment tools
-# Use DEBIAN_FRONTEND=noninteractive and add timeout settings
+# Install system dependencies. Every Python requirement ships prebuilt wheels,
+# so no compiler is needed. Alignments are computed in R by the database build
+# and stored in the database, so the image needs no aligner.
 RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     apt-get install -y --no-install-recommends \
-    wget \
-    build-essential \
-    g++ \
     ca-certificates \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-
-# Try to install clustalo separately (may not be available in newer Debian)
-# If it fails, continue anyway - you can install it manually if needed
-RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
-    (apt-get install -y --no-install-recommends clustalo || echo "clustalo not available, skipping") && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* || true
-
-# Install MUSCLE for the image's CPU architecture (Cloud Run runs linux/amd64).
-RUN case "$(dpkg --print-architecture)" in \
-        arm64) muscle_asset=muscle-linux-aarch64-v5.2 ;; \
-        *) muscle_asset=muscle-linux-x86.v5.2 ;; \
-    esac && \
-    wget --timeout=30 --tries=3 \
-        "https://github.com/rcedgar/muscle/releases/download/v5.2/${muscle_asset}" \
-        -O /usr/local/bin/muscle && \
-    chmod +x /usr/local/bin/muscle
 
 # Upgrade pip first for better wheel support
 RUN pip install --upgrade pip setuptools wheel

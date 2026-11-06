@@ -35,8 +35,9 @@ TLS_CERT_PATH = os.getenv('TLS_CERT_PATH', '/cert.pem')
 TLS_KEY_PATH = os.getenv('TLS_KEY_PATH', '/key.pem')
 SSL_CONTEXT = (TLS_CERT_PATH, TLS_KEY_PATH) if TLS_ENABLED else None
 
-# Public landing page (GitHub Pages) for the Cloud Run deployment. When set,
-# signed-out visitors to / are redirected there instead of the built-in page.
+# Public landing page (GitHub Pages) for the Cloud Run deployment. Signed-out
+# visitors to / and sign-outs are redirected there; when it is empty, / goes
+# straight to ORCID sign-in.
 LANDING_URL = os.getenv('HAPSEARCH_LANDING_URL', '').strip()
 
 # ORCID allowlist backend: 'firestore' on Cloud Run (K_SERVICE is set there),
@@ -87,9 +88,11 @@ FASTA_DIR = os.path.join(DATA_DIR, 'fasta')
 MARKERS_DIR = os.path.join(DATA_DIR, 'markers')
 SAMPLES_DIR = os.path.join(DATA_DIR, 'samples')
 PROJECTS_DIR = os.path.join(DATA_DIR, 'projects')
-# Maximum presence matrices each worker keeps decoded in memory. Each one is a
-# packed bitmap (roughly entities x microhaplotypes / 8 bytes).
-PRESENCE_CACHE_MAX_ARTIFACTS = int(os.getenv('PRESENCE_CACHE_MAX_ARTIFACTS', '256'))
+# Megabytes of decoded presence matrices each worker keeps in memory. Each one
+# is a packed bitmap (roughly entities x microhaplotypes / 8 bytes); all of
+# alfalfa v055 is about 25 MB. Past the limit, the least recently used
+# matrices are dropped and re-read from SQLite when next needed.
+PRESENCE_CACHE_MAX_MB = float(os.getenv('PRESENCE_CACHE_MAX_MB', '100'))
 
 # Dropbox configuration (for metadata sync)
 DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '')

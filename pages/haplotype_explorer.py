@@ -7,6 +7,8 @@ with expandable sample/project information
 import dash
 from dash import dcc, html, Input, Output, State, no_update, ctx
 import dash_bootstrap_components as dbc
+import csv
+import io
 import re
 try:
     import dash_ag_grid as dag
@@ -21,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Import app for callback registration
 from dash_app import app
 
+from database import allele_filter
 from database.db_manager import DatabaseManager
 from database.queries import (
     get_microhaplotypes_paginated,
@@ -156,10 +159,15 @@ layout = dbc.Container([
     dcc.Store(id='haplotype-results-page', data=1),
     # Stores for samples table data
     dcc.Store(id='samples-data-store', data=None),
+    # File name (without .csv) for the saved sample list
+    dcc.Store(id='samples-download-name-store', data=None),
+    dcc.Download(id='samples-download'),
     # Store for sample search filter
     dcc.Store(id='samples-search-filter', data=''),
     # Store for samples table page
     dcc.Store(id='samples-table-page', data=1),
+    # "Selected alleles" line, filled by pages/overview.py.
+    html.Div(id='haplotype-filter-status', className="mb-3"),
 
     dbc.Row([
         # Left panel: Search and browse with separate scrolling
@@ -196,13 +204,13 @@ layout = dbc.Container([
                             )
                         ], id='haplotype-chromosome-container'),
 
-                        # Allele ID filter
+                        # Clone ID filter
                         html.Div([
-                            html.Label("Allele ID:", className="fw-bold small", id='haplotype-marker-label'),
+                            html.Label("Clone ID:", className="fw-bold small", id='haplotype-marker-label'),
                             dbc.Input(
                                 id='haplotype-marker-filter',
                                 type='text',
-                                placeholder='Search allele ID...',
+                                placeholder='Search clone ID...',
                                 debounce=True,
                                 className="mb-3"
                             )
@@ -349,7 +357,7 @@ layout = dbc.Container([
                             ], className="haplotype-results-loading-region"),
                             id='haplotype-results-loading',
                             type='circle',
-                            color='#319B42',
+                            color='#066a73',
                         )
                     ])
                 ], id='haplotype-results-card')
@@ -386,13 +394,22 @@ layout = dbc.Container([
                             # Search input for samples table
                             html.Div([
                                 html.Label("Search samples:", className="fw-bold small mb-2"),
-                                dbc.Input(
-                                    id='samples-search-input',
-                                    type='text',
-                                    placeholder='Search samples...',
-                                    debounce=True,
-                                    className="mb-3"
-                                )
+                                html.Div([
+                                    dbc.Input(
+                                        id='samples-search-input',
+                                        type='text',
+                                        placeholder='Search samples...',
+                                        debounce=True,
+                                    ),
+                                    dbc.Button(
+                                        [html.I(className="fas fa-download me-2"), "Save CSV"],
+                                        id='samples-download-btn',
+                                        color="secondary",
+                                        outline=True,
+                                        size="sm",
+                                        className="haplo-action-btn text-nowrap",
+                                    ),
+                                ], className="d-flex align-items-center gap-2 mb-3"),
                             ], id='samples-search-container'),
                             # Samples table
                             html.Div(id='samples-table-body'),
@@ -422,19 +439,24 @@ layout = dbc.Container([
 
 @app.callback(
     Output('haplotype-chromosome-filter', 'options'),
+    Output('haplotype-chromosome-filter', 'value'),
+    Output('haplotype-marker-filter', 'value'),
+    Output('haplotype-sequence-search', 'value'),
+    Output('haplotype-sample-filter', 'value'),
     Input('selected-species-store', 'data')
 )
 def load_haplotype_chromosomes(species_id):
-    """Load chromosomes for selected species (Microhaplotypes tab)"""
+    """Load the species' chromosomes and clear filters left from the previous species."""
     if not species_id:
-        return []
+        return [], None, None, None, None
     try:
         db = DatabaseManager()
         with db.shared_connection():
             chromosomes = get_all_chromosomes_for_species(db, species_id)
-        return [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
+        options = [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
     except Exception:
-        return []
+        options = []
+    return options, None, None, None, None
 
 
 @app.callback(
@@ -513,6 +535,8 @@ def sync_haplotype_frequency_controls(_n_clicks, slider_value, min_input, max_in
     Input('haplotype-exclude-missing-samples', 'value'),
     Input('haplotype-page-prev', 'n_clicks'),
     Input('haplotype-page-next', 'n_clicks'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     State('haplotype-results-page', 'data'),
     prevent_initial_call=True
 )
@@ -526,6 +550,8 @@ def update_haplotype_page(
     exclude_missing_samples,
     prev_clicks,
     next_clicks,
+    program_ids,
+    allele_filter_value,
     current_page
 ):
     """Update page number based on filters or pagination component"""
@@ -541,15 +567,17 @@ def update_haplotype_page(
                 db,
                 species_id=species_id,
                 chromosome_id=chromosome_id,
-                search_name=None,
+                # Match the full Clone ID (chr1.1_000309952|Alt_0002), not just its locus.
+                search_name=marker_filter,
                 search_sequence=seq_search,
-                marker_id=marker_filter,
                 sample_filter=sample_filter,
                 min_frequency=min_freq,
                 max_frequency=max_freq,
                 exclude_missing_samples=_exclude_missing_samples_enabled(exclude_missing_samples),
                 page=1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
             total_pages = result.get('total_pages', 1)
             total_count = result.get('total', 0)
@@ -567,7 +595,7 @@ def update_haplotype_page(
     page = current_page or 1
 
     # Reset to page 1 when filters change
-    if triggered in ['haplotype-sequence-search', 'selected-species-store', 'haplotype-marker-filter', 'haplotype-chromosome-filter', 'haplotype-sample-filter', 'haplotype-frequency-range', 'haplotype-exclude-missing-samples']:
+    if triggered in ['haplotype-sequence-search', 'selected-species-store', 'haplotype-marker-filter', 'haplotype-chromosome-filter', 'haplotype-sample-filter', 'haplotype-frequency-range', 'haplotype-exclude-missing-samples', 'global-programs-dropdown', 'global-allele-filter']:
         page = 1
     elif triggered == 'haplotype-page-prev':
         page = max(1, page - 1)
@@ -600,9 +628,11 @@ def update_haplotype_page(
     Input('haplotype-frequency-range', 'value'),
     Input('haplotype-exclude-missing-samples', 'value'),
     Input('haplotype-results-page', 'data'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     prevent_initial_call=True
 )
-def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, sample_filter, freq_range, exclude_missing_samples, current_page):
+def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, sample_filter, freq_range, exclude_missing_samples, current_page, program_ids=None, allele_filter_value=None):
     """Search and display haplotypes with pagination"""
     try:
         db = DatabaseManager()
@@ -613,15 +643,17 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
                 db,
                 species_id=species_id,
                 chromosome_id=chromosome_id,
-                search_name=None,
+                # Match the full Clone ID (chr1.1_000309952|Alt_0002), not just its locus.
+                search_name=marker_filter,
                 search_sequence=seq_search,
-                marker_id=marker_filter,
                 sample_filter=sample_filter,
                 min_frequency=min_freq,
                 max_frequency=max_freq,
                 exclude_missing_samples=_exclude_missing_samples_enabled(exclude_missing_samples),
                 page=current_page or 1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
 
             if not result['microhaplotypes']:
@@ -671,18 +703,24 @@ def search_haplotypes(seq_search, species_id, marker_filter, chromosome_id, samp
      Output('navigate-to-haplotype-store', 'data', allow_duplicate=True),
      Output('samples-data-store', 'data'),
      Output('toggle-samples', 'children'),
-     Output('samples-section-wrapper', 'style')],
+     Output('samples-section-wrapper', 'style'),
+     Output('samples-download-name-store', 'data')],
     Input({'type': 'haplotype-list-item', 'index': dash.ALL}, 'n_clicks'),
     Input('navigate-to-haplotype-store', 'data'),
+    Input('selected-species-store', 'data'),
     State('haplotype-detail-content', 'children'),
     prevent_initial_call=True
 )
-def show_haplotype_details(n_clicks, navigate_data, current_details):
+def show_haplotype_details(n_clicks, navigate_data, _species_id, current_details):
     """Display selected haplotype details"""
     haplotype_name = None
 
     # Check what triggered the callback
     triggered = ctx.triggered_id if ctx.triggered else None
+
+    # A new species clears the previous species' microhaplotype.
+    if triggered == 'selected-species-store':
+        current_details = None
 
     # Priority 1: Check navigation store first (for cross-tab navigation)
     if triggered == 'navigate-to-haplotype-store':
@@ -700,10 +738,10 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
         if current_details:
             if isinstance(current_details, str):
                 if "Select a haplotype" not in current_details:
-                    return no_update, no_update, no_update, no_update, no_update
+                    return no_update, no_update, no_update, no_update, no_update, no_update
             else:
                 # It's a Div component, preserve it
-                return no_update, no_update, no_update, no_update, no_update
+                return no_update, no_update, no_update, no_update, no_update, no_update
         return (
             html.Div("Select a microhaplotype result to view details", className="text-muted"),
             no_update,
@@ -714,6 +752,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                 html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
             ],
             {'display': 'none'},
+            None,
         )
 
     try:
@@ -732,6 +771,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                         html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
                     ],
                     {'display': 'none'},
+                    None,
                 )
 
             # Get samples and projects
@@ -774,6 +814,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
 
             # Create samples table data
             samples_table_data = create_samples_table(samples, presence_samples, presence_stats, haplotype_name)
+            samples_download_name = _samples_download_name(db, haplotype)
             collaborators_table_data = build_collaborator_rows(projects, contacts_data)
             collaborators_count = len(collaborators_table_data)
             samples_count = len(samples_table_data)
@@ -911,7 +952,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
             html.I(className="fas fa-leaf me-2"),
             samples_button_label,
             html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
-        ], {'display': 'block'}
+        ], {'display': 'block'}, samples_download_name
 
     except Exception as e:
         return (
@@ -924,6 +965,7 @@ def show_haplotype_details(n_clicks, navigate_data, current_details):
                 html.I(className="fas fa-chevron-down ms-2", id='samples-chevron')
             ],
             {'display': 'none'},
+            None,
         )
 
 
@@ -1083,6 +1125,11 @@ def update_samples_table(samples_data, search_filter, current_page):
             'rowHeight': 38,
             'domLayout': 'autoHeight',
             'suppressCellFocus': True,
+            # Let people select and copy cell text.
+            'enableCellTextSelection': True,
+            'ensureDomOrder': True,
+            # A drag that starts on a header would otherwise reorder columns.
+            'suppressMovableColumns': True,
             'pagination': True,
             'paginationPageSize': 10,
             # Disable user ability to change page size
@@ -1109,6 +1156,42 @@ def update_samples_table(samples_data, search_filter, current_page):
         {'display': 'none'},
         1
     )
+
+
+def _samples_download_name(db, haplotype):
+    """File name for the saved sample list: <microhaplotype>_samples_<common name>."""
+    # Names such as chr1.1_000194324|Alt_0002 hold characters some systems
+    # don't allow in file names.
+    haplotype_name = re.sub(r'[\\/:*?"<>|\s]+', '_', haplotype.get('haplotype_name') or '')
+    base = f"{haplotype_name or 'microhaplotype'}_samples"
+    rows = db.execute_query(
+        "SELECT name, common_name FROM species WHERE id = ?",
+        (haplotype.get('species_id'),),
+    )
+    species = rows[0] if rows else {}
+    species_name = (species.get('common_name') or species.get('name') or '').strip()
+    slug = re.sub(r'[^a-z0-9]+', '_', species_name.lower()).strip('_')
+    return f"{base}_{slug}" if slug else base
+
+
+@app.callback(
+    Output('samples-download', 'data'),
+    Input('samples-download-btn', 'n_clicks'),
+    State('samples-data-store', 'data'),
+    State('samples-download-name-store', 'data'),
+    prevent_initial_call=True
+)
+def download_samples_csv(n_clicks, samples_data, download_name):
+    """Save every sample for the selected microhaplotype as a CSV."""
+    if not n_clicks or not samples_data:
+        return no_update
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(['Sample Name', 'Owners'])
+    for row in samples_data:
+        writer.writerow([row.get('Sample Name', ''), row.get('Owners', '')])
+    filename = f"{download_name or 'microhaplotype_samples'}.csv"
+    return dict(content=buffer.getvalue(), filename=filename, type='text/csv')
 
 
 def create_samples_table(samples, presence_samples=None, presence_stats=None, haplotype_name=None):
@@ -1250,6 +1333,11 @@ def create_projects_cards(projects, contacts_data=None):
             'rowHeight': 36,
             'domLayout': 'autoHeight',
             'suppressCellFocus': True,
+            # Let people select and copy cell text.
+            'enableCellTextSelection': True,
+            'ensureDomOrder': True,
+            # A drag that starts on a header would otherwise reorder columns.
+            'suppressMovableColumns': True,
             'pagination': True,
             'paginationPageSize': 5,
             # Disable user ability to change page size
@@ -1299,6 +1387,11 @@ def create_contact_section(projects, contacts_data=None, rows=None):
             'rowHeight': 36,
             'domLayout': 'autoHeight',
             'suppressCellFocus': True,
+            # Let people select and copy cell text.
+            'enableCellTextSelection': True,
+            'ensureDomOrder': True,
+            # A drag that starts on a header would otherwise reorder columns.
+            'suppressMovableColumns': True,
             'pagination': True,
             'paginationPageSize': 10,
             'paginationPageSizeSelector': False,

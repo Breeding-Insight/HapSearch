@@ -8,22 +8,30 @@ import numpy as np
 from collections import Counter
 import sys
 import os
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dash_app import app
 
+from database import allele_filter
 from database.db_manager import DatabaseManager
 from database.queries import (
     get_markers_paginated,
     get_marker_details,
     get_microhaplotypes_for_marker,
+    get_alignments_for_marker,
     get_variants_for_marker,
     get_all_chromosomes_for_species,
     get_botloci_count,
     is_bottom_locus
 )
-from design.colors import NUCLEOTIDE_COLORS
+from design.colors import CHART_HIGHLIGHT, NUCLEOTIDE_COLORS
+
+# Marks alignment rows that match the app's allele filter.
+FILTER_MARK_COLOR = CHART_HIGHLIGHT
+# Alleles outside the filter: grey row labels.
+FILTERED_OUT_COLOR = "#8A969A"
 from alignment.coordinates import (
     MSA_AXIS_TICK_FONT,
     MSA_AXIS_TITLE_FONT,
@@ -31,7 +39,7 @@ from alignment.coordinates import (
     relative_position,
     relative_positions,
 )
-from alignment.aligner import MSAAligner
+from alignment.aligner import merge_reference_alignments, reverse_complement_row
 from alignment.variant_annotator import VariantAnnotator
 from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
@@ -71,11 +79,11 @@ def create_single_view_layout():
                         ], id='marker-chromosome-container'),
 
                         html.Div([
-                            html.Label("Allele ID:", className="fw-bold small", id='marker-search-label'),
+                            html.Label("Clone ID:", className="fw-bold small", id='marker-search-label'),
                             dbc.Input(
                                 id='marker-search-input',
                                 type='text',
-                                placeholder='Search allele ID...',
+                                placeholder='Search clone ID...',
                                 debounce=True,
                                 className="mb-3"
                             )
@@ -146,6 +154,8 @@ layout = dbc.Container([
     ),
     dcc.Store(id='marker-left-panel-minimized', data=False),
     dcc.Store(id='marker-results-page', data=1),
+    # "Selected alleles" line, filled by pages/overview.py.
+    html.Div(id='marker-filter-status', className="mb-3"),
 
     create_single_view_layout()
 
@@ -154,20 +164,24 @@ layout = dbc.Container([
 
 @app.callback(
     Output('marker-chromosome-filter', 'options'),
+    Output('marker-chromosome-filter', 'value'),
+    Output('marker-search-input', 'value'),
+    Output('marker-sequence-search-input', 'value'),
     Input('selected-species-store', 'data')
 )
 def load_chromosomes(species_id):
-    """Load chromosomes for selected species"""
+    """Load the species' chromosomes and clear filters left from the previous species."""
     if not species_id:
-        return []
+        return [], None, None, None
 
     try:
         db = DatabaseManager()
         with db.shared_connection():
             chromosomes = get_all_chromosomes_for_species(db, species_id)
-        return [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
+        options = [{'label': c['chromosome_name'], 'value': c['id']} for c in chromosomes]
     except Exception:
-        return []
+        options = []
+    return options, None, None, None
 
 
 
@@ -185,10 +199,13 @@ def load_chromosomes(species_id):
     Input('marker-chromosome-filter', 'value'),
     Input('marker-page-prev', 'n_clicks'),
     Input('marker-page-next', 'n_clicks'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     State('marker-results-page', 'data'),
     prevent_initial_call=True
 )
-def update_marker_page(search_term, sequence_search, species_id, chromosome_id, prev_clicks, next_clicks, current_page):
+def update_marker_page(search_term, sequence_search, species_id, chromosome_id, prev_clicks, next_clicks,
+                       program_ids, allele_filter_value, current_page):
     """Update page number based on filters or pagination component"""
     triggered = ctx.triggered_id if ctx.triggered else None
     
@@ -203,7 +220,9 @@ def update_marker_page(search_term, sequence_search, species_id, chromosome_id, 
                 search_marker_id=search_term,
                 search_sequence=sequence_search,
                 page=1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
             total_pages = result.get('total_pages', 1)
             total_count = result.get('total', 0)
@@ -221,7 +240,8 @@ def update_marker_page(search_term, sequence_search, species_id, chromosome_id, 
     page = current_page or 1
 
     # Reset to page 1 when filters change
-    if triggered in ['marker-search-input', 'marker-sequence-search-input', 'selected-species-store', 'marker-chromosome-filter']:
+    if triggered in ['marker-search-input', 'marker-sequence-search-input', 'selected-species-store', 'marker-chromosome-filter',
+                     'global-programs-dropdown', 'global-allele-filter']:
         page = 1
     elif triggered == 'marker-page-prev':
         page = max(1, page - 1)
@@ -249,9 +269,12 @@ def update_marker_page(search_term, sequence_search, species_id, chromosome_id, 
     Input('selected-species-store', 'data'),
     Input('marker-chromosome-filter', 'value'),
     Input('marker-results-page', 'data'),
+    Input('global-programs-dropdown', 'value'),
+    Input('global-allele-filter', 'value'),
     prevent_initial_call=True
 )
-def search_markers(search_term, sequence_search, species_id, chromosome_id, current_page):
+def search_markers(search_term, sequence_search, species_id, chromosome_id, current_page,
+                   program_ids, allele_filter_value):
     """Search and display markers with pagination"""
     try:
         db = DatabaseManager()
@@ -263,7 +286,9 @@ def search_markers(search_term, sequence_search, species_id, chromosome_id, curr
                 search_marker_id=search_term,
                 search_sequence=sequence_search,
                 page=current_page or 1,
-                per_page=7
+                per_page=7,
+                microhaplotype_ids=allele_filter.resolve_allele_filter(
+                    species_id, program_ids, allele_filter_value),
             )
 
         if not result['markers']:
@@ -297,14 +322,19 @@ def search_markers(search_term, sequence_search, species_id, chromosome_id, curr
      Output('navigate-to-marker-store', 'data', allow_duplicate=True)],
     Input({'type': 'marker-list-item', 'index': dash.ALL}, 'n_clicks'),
     Input('navigate-to-marker-store', 'data'),
+    Input('selected-species-store', 'data'),
     State('marker-detail-store', 'data'),
     prevent_initial_call=True
 )
-def show_marker_details(n_clicks, navigate_data, current_marker_id):
+def show_marker_details(n_clicks, navigate_data, _species_id, current_marker_id):
     """Display selected marker details"""
     marker_id = None
 
     triggered = ctx.triggered_id if ctx.triggered else None
+
+    # A new species clears the previous species' locus and its alignment.
+    if triggered == 'selected-species-store':
+        current_marker_id = None
 
     if triggered == 'navigate-to-marker-store':
         if navigate_data and isinstance(navigate_data, dict) and navigate_data.get('marker_id'):
@@ -344,7 +374,7 @@ def show_marker_details(n_clicks, navigate_data, current_marker_id):
             ], className="msa-results-loading-region"),
             id='marker-msa-results-loading',
             type='circle',
-            color='#319B42',
+            color='#066a73',
         )
         ])
     return placeholder_view, None, no_update
@@ -366,7 +396,6 @@ def create_marker_detail_view(marker_id):
             haplotypes = get_microhaplotypes_for_marker(db, marker_id)
             variants = get_variants_for_marker(db, marker_id)
 
-        haplotypes_sorted = sorted(haplotypes, key=lambda h: get_allele_sort_key(h['haplotype_name']), reverse=False)
 
         if not variants and haplotypes:
             variants = auto_detect_variants(haplotypes, marker)
@@ -429,22 +458,14 @@ def create_marker_detail_view(marker_id):
                 ], className="msa-results-loading-region"),
                 id='marker-msa-results-loading',
                 type='circle',
-                color='#319B42',
+                color='#066a73',
             ),
 
-            html.Div([
-                html.Small("Click microhaplotype ID to view details:", className="text-muted me-2"),
-                html.Div([
-                    dbc.Button(
-                        h['haplotype_name'].split('|')[-1],  # Show just the allele ID
-                        id={'type': 'haplotype-link-btn', 'index': h['haplotype_name']},
-                        color="primary",
-                        outline=True,
-                        size="sm",
-                        className="me-1 mb-1"
-                    ) for h in haplotypes_sorted
-                ], className="d-flex flex-wrap")
-            ], className="mb-3 p-2 bg-light border rounded"),
+            html.Div(
+                [html.I(className="fas fa-hand-pointer me-2"),
+                 "Click a microhaplotype name in the alignment to open it in the Microhaplotypes tab."],
+                className="small mb-3",
+            ),
 
             html.Div([
                 dbc.Row([
@@ -602,8 +623,13 @@ def get_allele_sort_key(haplotype_name):
         return (4, 0)  # Unknown type
 
 
-def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_strand=False):
-    """Create enhanced multiple sequence alignment visualization"""
+def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_strand=False,
+                      highlight_names=None):
+    """Create enhanced multiple sequence alignment visualization.
+
+    highlight_names: alleles matching the app's allele filter, marked with a
+    teal dot in the row labels.
+    """
     if not haplotypes:
         return go.Figure()
 
@@ -744,14 +770,13 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
                 x_values.append(marker['position_start'] + align_pos)
         
         x_title = 'Genomic Position'
-        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
     else:
         x_values = list(range(marker['position_start'], marker['position_start'] + seq_length))
         x_title = 'Genomic Position'
-        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
+        hover_template = '<b>Genomic Position:</b> %{x:,}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
 
     target_snp_x_pos = None
-    target_snp_absolute_x_pos = None
     if target_snp_position is not None:
         if is_aligned:
             if target_snp_position < len(x_values):
@@ -774,12 +799,10 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         else:
             x_pos = marker['position_start'] + target_snp_position
 
-        target_snp_absolute_x_pos = x_pos
         target_snp_x_pos = x_pos
         x_values = relative_positions(x_values, target_snp_x_pos, is_bottom_strand)
         x_title = 'Relative Position to Target SNP'
-        hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Allele:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
-        target_snp_x_pos = 0
+        hover_template = '<b>Relative Position to Target SNP:</b> %{x:g}<br><b>Microhaplotype:</b> %{y}<br><b>Base:</b> %{text}<extra></extra>'
 
     # For unaligned sequences, ensure zmin and zmax are set correctly for single color
     if not is_aligned and n_colors == 1:
@@ -789,13 +812,27 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         zmin_val = 0
         zmax_val = n_colors - 1 if n_colors > 1 else 1
     
+    # Draw one equal-width cell per alignment column. Columns are labelled by
+    # their reference position; an insertion column has none (its x value
+    # falls between two positions), so it gets no tick and reads "insertion".
+    column_positions = x_values
+    column_of_position = {}
+    for column, pos in enumerate(column_positions):
+        if pos == int(pos):
+            column_of_position.setdefault(int(pos), column)
+    position_labels = [
+        f'{int(pos):,}' if pos == int(pos) else 'insertion' for pos in column_positions
+    ]
+    hover_template = re.sub(r'%\{x[^}]*\}', '%{customdata}', hover_template)
+
     # Keep unaligned sequence rows continuous so bases remain easy to read.
     x_cell_gap = 0 if not is_aligned else 0.5
     y_cell_gap = 2.0 if not is_aligned else 0.5
     
     fig = go.Figure(data=go.Heatmap(
         z=numeric_matrix,
-        x=x_values,
+        x=list(range(len(column_positions))),
+        customdata=[position_labels] * len(numeric_matrix),
         y=[f"{name.split('|')[-1]}" for name in haplotype_names],
         colorscale=colorscale,
         zmin=zmin_val,
@@ -808,69 +845,8 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         xgap=x_cell_gap,
         ygap=y_cell_gap
     ))
-    snp_positions = set()
-    for variant in variants:
-        variant_type = variant.get('variant_type', '').upper()
-        if 'SNP' in variant_type and 'INDEL' not in variant_type:
-            if is_aligned:
-                snp_pos = variant.get('genomic_position')
-                if snp_pos is None:
-                    align_pos = variant.get('position', 0)
-                    if ref_sequence and align_pos < len(ref_sequence):
-                        genomic_offset = 0
-                        for i in range(min(align_pos + 1, len(ref_sequence))):
-                            if ref_sequence[i].upper() not in ['-', 'N']:
-                                if i == align_pos:
-                                    snp_pos = marker['position_start'] + genomic_offset
-                                    break
-                                genomic_offset += 1
-                        if snp_pos is None:
-                            genomic_offset = sum(1 for j in range(align_pos) 
-                                               if j < len(ref_sequence) and ref_sequence[j].upper() not in ['-', 'N'])
-                            snp_pos = marker['position_start'] + genomic_offset
-            else:
-                snp_pos = variant.get('position')
-                if snp_pos and snp_pos < marker['position_start']:
-                    snp_pos = marker['position_start'] + snp_pos
-            
-            if snp_pos is not None and target_snp_absolute_x_pos is not None:
-                snp_pos = relative_position(snp_pos, target_snp_absolute_x_pos, is_bottom_strand)
-            
-            if snp_pos is not None:
-                snp_positions.add(int(snp_pos))
-    indel_positions = set()
-    for variant in variants:
-        variant_type = variant.get('variant_type', '').upper()
-        if 'INDEL' in variant_type or variant_type == 'INDEL':
-            if is_aligned:
-                indel_pos = variant.get('genomic_position')
-                if indel_pos is None:
-                    align_pos = variant.get('position', 0)
-                    align_pos_0based = variant.get('position_0based', align_pos - 1)
-                    if ref_sequence and align_pos_0based < len(ref_sequence):
-                        genomic_offset = 0
-                        for i in range(min(align_pos_0based + 1, len(ref_sequence))):
-                            if ref_sequence[i].upper() not in ['-', 'N']:
-                                if i == align_pos_0based:
-                                    indel_pos = marker['position_start'] + genomic_offset
-                                    break
-                                genomic_offset += 1
-                        if indel_pos is None:
-                            genomic_offset = sum(1 for j in range(align_pos_0based) 
-                                               if j < len(ref_sequence) and ref_sequence[j].upper() not in ['-', 'N'])
-                            indel_pos = marker['position_start'] + genomic_offset
-            else:
-                indel_pos = variant.get('position')
-                if indel_pos and indel_pos < marker['position_start']:
-                    indel_pos = marker['position_start'] + indel_pos
-            
-            if indel_pos is not None and target_snp_absolute_x_pos is not None:
-                indel_pos = relative_position(indel_pos, target_snp_absolute_x_pos, is_bottom_strand)
-            
-            if indel_pos is not None:
-                indel_positions.add(int(indel_pos))
-
-    xaxis_autorange = 'reversed' if target_snp_absolute_x_pos is not None and is_bottom_strand else True
+    # Columns already run in display order (bottom-strand positions descend).
+    xaxis_autorange = True
     integer_positions = []
     if x_values:
         integer_positions = sorted(set(int(pos) for pos in x_values if pos == int(pos)))
@@ -881,7 +857,7 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             
             xaxis_config = dict(
                 tickmode='array',
-                tickvals=integer_positions,
+                tickvals=[column_of_position[pos] for pos in integer_positions],
                 ticktext=tick_texts,
                 tickangle=-90,
                 showgrid=False,
@@ -935,57 +911,44 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
         yaxis_range = [-0.5, len(haplotypes) - 0.5 + top_extension]
 
     annotations = []
-    # Only add variant markers for aligned sequences
+    # Only add variant markers for aligned sequences. Variants carry their
+    # alignment column, which is also the plot's x, so insertion columns
+    # (which have no reference position) are marked too.
     if is_aligned:
-        if snp_positions and x_values and integer_positions:
-            for snp_pos in snp_positions:
-                if target_snp_x_pos is not None and int(snp_pos) == int(target_snp_x_pos):
-                    continue
-                if snp_pos >= min_x and snp_pos <= max_x and snp_pos in integer_positions:
-                    annotations.append(dict(
-                        x=snp_pos,
-                        y=top_marker_y,
-                        text='●',
-                        showarrow=False,
-                        xref='x',
-                        yref='y',
-                        xanchor='center',
-                        yanchor='bottom',
-                        font=dict(size=14, color='#FF4500', family='Arial, sans-serif'),
-                        opacity=1.0
-                    ))
-        
-        if indel_positions and x_values and integer_positions:
-            for indel_pos in indel_positions:
-                if indel_pos >= min_x and indel_pos <= max_x and indel_pos in integer_positions:
-                    annotations.append(dict(
-                        x=indel_pos,
-                        y=top_marker_y,
-                        text='◆',
-                        showarrow=False,
-                        xref='x',
-                        yref='y',
-                        xanchor='center',
-                        yanchor='bottom',
-                        font=dict(size=14, color='#2196F3', family='Arial, sans-serif'),
-                        opacity=1.0
-                    ))
-        
-        if target_snp_x_pos is not None and x_values and integer_positions:
-            if target_snp_x_pos >= min_x and target_snp_x_pos <= max_x and int(target_snp_x_pos) in integer_positions:
-                annotations.append(dict(
-                    x=target_snp_x_pos,
-                    y=top_marker_y,
-                    text='⁑',
-                    showarrow=False,
-                    xref='x',
-                    yref='y',
-                    xanchor='center',
-                    yanchor='bottom',
-                    font=dict(size=18, color='#7B2CBF', family='Arial, sans-serif'),
-                    opacity=1.0
-                ))
+        def _marker(column, text, size, color):
+            return dict(
+                x=column,
+                y=top_marker_y,
+                text=text,
+                showarrow=False,
+                xref='x',
+                yref='y',
+                xanchor='center',
+                yanchor='bottom',
+                font=dict(size=size, color=color, family='Arial, sans-serif'),
+                opacity=1.0,
+            )
 
+        n_columns = len(column_positions)
+        snp_columns = set()
+        indel_columns = set()
+        for variant in variants:
+            column = variant.get('position')
+            if column is None or not 0 <= column < n_columns:
+                continue
+            variant_type = variant.get('variant_type', '').upper()
+            if 'INDEL' in variant_type:
+                indel_columns.add(column)
+            elif 'SNP' in variant_type:
+                snp_columns.add(column)
+        if target_snp_position is not None:
+            snp_columns.discard(target_snp_position)
+            indel_columns.discard(target_snp_position)
+
+        annotations.extend(_marker(c, '●', 14, '#FF4500') for c in sorted(snp_columns))
+        annotations.extend(_marker(c, '◆', 14, '#2196F3') for c in sorted(indel_columns))
+        if target_snp_position is not None and target_snp_position < n_columns:
+            annotations.append(_marker(target_snp_position, '⁑', 18, '#7B2CBF'))
     all_annotations = annotations
 
     fig.update_layout(
@@ -1002,9 +965,9 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             autorange=True,  # Enable autoscaling (removed fixed range)
             tickmode='array',
             tickvals=list(range(len(haplotypes))),
-            ticktext=[f"{name.split('|')[-1]}" for name in haplotype_names],
+            ticktext=[_allele_row_label(name, highlight_names) for name in haplotype_names],
             tickfont=MSA_AXIS_TICK_FONT,
-            title=dict(text='Allele Variant', font=MSA_AXIS_TITLE_FONT)
+            title=dict(text='Microhaplotype', font=MSA_AXIS_TITLE_FONT)
         ),
         plot_bgcolor='#dee2e6' if not is_aligned else '#f8f9fa',  # Darker gray for unaligned to show grid lines better
         paper_bgcolor='#f8f9fa',  # Bootstrap bg-light color for the entire figure area (matches legend box)
@@ -1014,11 +977,24 @@ def create_msa_figure(haplotypes, variants, marker, is_aligned=False, is_bottom_
             l=150, 
             r=50
         ),
-        annotations=all_annotations
+        annotations=all_annotations,
+        # Row labels are clickable (assets/msa_allele_links.js), which reads
+        # the full allele names from here.
+        meta={'allele_names': haplotype_names},
     )
     fig.update_xaxes(title=dict(text=x_title, font=MSA_AXIS_TITLE_FONT))
 
     return fig
+
+
+def _allele_row_label(name, highlight_names):
+    """Row label: alleles matching the allele filter get a teal dot, the rest go grey."""
+    allele = name.split('|')[-1]
+    if highlight_names is None:
+        return allele
+    if name in highlight_names:
+        return f"<span style='color:{FILTER_MARK_COLOR}'>●</span> <b>{allele}</b>"
+    return f"<span style='color:{FILTERED_OUT_COLOR}'>{allele}</span>"
 
 
 def create_variant_table(variants):
@@ -1053,39 +1029,17 @@ def create_variant_table(variants):
 
 
 @app.callback(
-    Output('navigate-to-haplotype-store', 'data'),
-    Input({'type': 'haplotype-link-btn', 'index': dash.ALL}, 'n_clicks'),
-    prevent_initial_call=True
-)
-def navigate_to_haplotype_explorer(n_clicks):
-    """Store haplotype name and trigger navigation to Haplotype Explorer tab"""
-    triggered = ctx.triggered_id
-
-    if not triggered or not isinstance(triggered, dict):
-        return no_update
-
-    if triggered.get('type') != 'haplotype-link-btn':
-        return no_update
-
-    if n_clicks:
-        has_real_click = any(clicks and clicks > 0 for clicks in n_clicks)
-        if not has_real_click:
-            return no_update
-
-    haplotype_name = triggered.get('index')
-    if not haplotype_name:
-        return no_update
-
-    return {'haplotype_name': haplotype_name}
-
-
-@app.callback(
     Output('marker-alignment-store', 'data'),
     Input('marker-detail-store', 'data'),
     prevent_initial_call=True
 )
 def align_marker_sequences(marker_id):
-    """Automatically align marker sequences using CLUSTAL Omega when marker is selected"""
+    """Align a marker's microhaplotypes when it is selected.
+
+    Each microhaplotype shows BIGr's alignment to the locus's Ref_0001, stored
+    by the database build. A locus without a Ref_0001 is shown unaligned, as
+    BIGr skips it too.
+    """
     import time as _time
     if not marker_id:
         return {'status': 'original', 'marker_id': None, 'sequences': None, 'variants': None}
@@ -1098,6 +1052,8 @@ def align_marker_sequences(marker_id):
         with db.shared_connection():
             haplotypes = get_microhaplotypes_for_marker(db, marker_id)
             marker = get_marker_details(db, marker_id)
+            bottom_strand = is_bottom_locus(db, marker_id)
+            stored_alignments = get_alignments_for_marker(db, marker_id)
 
         print(f"[ALIGN] {marker_id}: {len(haplotypes)} haplotypes, "
               f"seq lengths={[len(h['haplotype_sequence']) for h in haplotypes[:5]]}")
@@ -1112,8 +1068,38 @@ def align_marker_sequences(marker_id):
             record = SeqRecord(seq, id=hap['haplotype_name'], description="")
             seq_records.append(record)
 
-        aligner = MSAAligner(algorithm='clustal')
-        alignment = aligner.align_sequences(seq_records)
+        reference = next((r for r in seq_records if r.id.endswith('|Ref_0001')), None)
+        if not reference:
+            print(f"[ALIGN] {marker_id}: skipped — no Ref_0001")
+            return {
+                'status': 'original', 'marker_id': marker_id, 'sequences': None, 'variants': None,
+                'note': "This locus has no Ref_0001 microhaplotype to align to, so its "
+                        "sequences are shown unaligned.",
+            }
+
+        # Each microhaplotype's alignment to Ref_0001 is BIGr's own,
+        # computed in R by the database build (scripts/align_microhaplotypes.py).
+        stored = {row['haplotype_name']: row for row in stored_alignments}
+        missing = [r.id for r in seq_records if r is not reference and r.id not in stored]
+        if missing:
+            raise ValueError(
+                "this database has no BIGr alignment for this locus. Rebuild the "
+                "database, or run scripts/align_microhaplotypes.py on it."
+            )
+        pairwise = []
+        for record in seq_records:
+            if record is reference:
+                continue
+            ref_row = stored[record.id]['aligned_reference']
+            seq_row = stored[record.id]['aligned_sequence']
+            if bottom_strand:
+                # BIGr aligns bottom-strand loci reverse complemented; turn
+                # the rows back to the amplicon orientation shown here.
+                ref_row = reverse_complement_row(ref_row)
+                seq_row = reverse_complement_row(seq_row)
+            pairwise.append((record.id, ref_row, seq_row))
+        alignment = merge_reference_alignments(
+            reference, pairwise, pad_toward_start=bottom_strand)
 
         annotator = VariantAnnotator(min_frequency=0.1)
         aligned_variants_raw = annotator.annotate_alignment(alignment)
@@ -1243,10 +1229,13 @@ def toggle_alignment_view(n_clicks, alignment_data):
      Output('alignment-status-message', 'children'),
      Output('show-original-btn', 'children')],
     [Input('marker-alignment-store', 'data'),
-     Input('marker-detail-store', 'data')],
+     Input('marker-detail-store', 'data'),
+     Input('global-allele-filter', 'value')],
+    State('global-programs-dropdown', 'value'),
+    State('selected-species-store', 'data'),
     prevent_initial_call=True
 )
-def update_msa_visualization(alignment_data, marker_id):
+def update_msa_visualization(alignment_data, marker_id, allele_filter_value, program_ids, species_id):
     """Update MSA visualization based on alignment status.
 
     Must react to BOTH marker-alignment-store (alignment finished) AND
@@ -1290,7 +1279,7 @@ def update_msa_visualization(alignment_data, marker_id):
             )
             loading_status = dbc.Alert([
                 html.I(className="fas fa-spinner fa-spin me-2"),
-                "Running CLUSTAL Omega alignment..."
+                "Aligning sequences..."
             ], color="secondary", className="mt-2")
             return loading_fig, loading_status, [html.I(className="fas fa-dna me-2"), "Show Aligned"]
 
@@ -1305,11 +1294,7 @@ def update_msa_visualization(alignment_data, marker_id):
             haplotypes = alignment_data['sequences']
             variants = alignment_data['variants']
             is_aligned = True
-            num_variants = len(variants)
-            status_message = dbc.Alert([
-                html.I(className="fas fa-check-circle me-2"),
-                f"Sequences aligned using CLUSTAL Omega ({num_variants} variants detected)"
-            ], color="success", className="mt-2", dismissable=True)
+            status_message = html.Div()
             button_text = [html.I(className="fas fa-undo me-2"), "Show Original (Unaligned)"]
         else:
             with db.shared_connection():
@@ -1324,6 +1309,11 @@ def update_msa_visualization(alignment_data, marker_id):
                     html.I(className="fas fa-exclamation-triangle me-2"),
                     f"Alignment failed: {alignment_data['error']}"
                 ], color="warning", className="mt-2", dismissable=True)
+            elif alignment_matches_marker and alignment_data.get('note'):
+                status_message = dbc.Alert([
+                    html.I(className="fas fa-info-circle me-2"),
+                    alignment_data['note']
+                ], color="info", className="mt-2", dismissable=True)
             elif alignment_matches_marker and alignment_data.get('sequences'):
                 status_message = dbc.Alert([
                     html.I(className="fas fa-info-circle me-2"),
@@ -1332,7 +1322,7 @@ def update_msa_visualization(alignment_data, marker_id):
             elif alignment_matches_marker and len(haplotypes) < 2:
                 status_message = dbc.Alert([
                     html.I(className="fas fa-info-circle me-2"),
-                    f"Showing original sequences ({len(haplotypes)} allele)"
+                    f"Showing original sequences ({len(haplotypes)} microhaplotype)"
                 ], color="info", className="mt-2", dismissable=True)
             else:
                 status_message = html.Div()
@@ -1348,12 +1338,29 @@ def update_msa_visualization(alignment_data, marker_id):
         if botloci_warning:
             status_message = html.Div([botloci_warning, status_message])
 
+        highlight_names = None
+        kept = allele_filter.resolve_allele_filter(species_id, program_ids, allele_filter_value)
+        if kept is not None:
+            with db.shared_connection():
+                highlight_names = {
+                    row['haplotype_name'] for row in get_microhaplotypes_for_marker(db, marker_id)
+                    if row['id'] in kept
+                }
+            status_message = html.Div([
+                status_message,
+                html.Div([
+                    html.Span("●", style={'color': FILTER_MARK_COLOR}),
+                    " Microhaplotypes that match the selected filters",
+                ], className="small mt-2"),
+            ])
+
         msa_fig = create_msa_figure(
             haplotypes,
             variants,
             marker,
             is_aligned,
-            marker_is_bottom_strand
+            marker_is_bottom_strand,
+            highlight_names,
         )
 
         return msa_fig, status_message, button_text
