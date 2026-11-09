@@ -5,8 +5,6 @@
 
 <div align="center">
 
-# HapSearch
-
 <img src="static/brand/hapsearch-wordmark.png" alt="HapSearch" width="272"/>
 
 </div>
