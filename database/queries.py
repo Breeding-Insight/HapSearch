@@ -268,6 +268,7 @@ def get_marker_details(db: DatabaseManager, marker_id: str) -> Dict[str, Any]:
             mk.position_end,
             c.chromosome_name,
             s.name as species_name,
+            s.common_name as species_common_name,
             s.id as species_id
         FROM markers mk
         JOIN chromosomes c ON mk.chromosome_id = c.id
@@ -488,8 +489,15 @@ def get_projects_for_microhaplotype(db: DatabaseManager,
     return db.execute_query(query, (haplotype_name,))
 
 
-def get_database_statistics(db: DatabaseManager) -> Dict[str, int]:
-    """Get overall database statistics"""
+def get_database_statistics(db: DatabaseManager, species_ids=None) -> Dict[str, int]:
+    """Get overall database statistics.
+
+    With species_ids (an iterable of species ids), count only those species,
+    so the header shows a restricted user nothing about other species. None
+    counts everything.
+    """
+    if species_ids is not None:
+        return _species_scoped_statistics(db, sorted(int(i) for i in species_ids))
     stats = {
         'species_count': db.get_table_row_count('species'),
         'chromosome_count': db.get_table_row_count('chromosomes'),
@@ -501,6 +509,32 @@ def get_database_statistics(db: DatabaseManager) -> Dict[str, int]:
         'association_count': db.get_table_row_count('microhaplotype_samples')
     }
     return stats
+
+
+def _species_scoped_statistics(db: DatabaseManager, species_ids: List[int]) -> Dict[str, int]:
+    if not species_ids:
+        return dict.fromkeys((
+            'species_count', 'chromosome_count', 'marker_count', 'microhaplotype_count',
+            'variant_count', 'project_count', 'sample_count', 'association_count',
+        ), 0)
+    marks = ",".join("?" * len(species_ids))
+    chromosomes = f"SELECT id FROM chromosomes WHERE species_id IN ({marks})"
+    markers = f"SELECT id FROM markers WHERE chromosome_id IN ({chromosomes})"
+    samples = f"SELECT id FROM samples WHERE species_id IN ({marks})"
+    query = f"""
+        SELECT
+            (SELECT COUNT(*) FROM species WHERE id IN ({marks})) AS species_count,
+            (SELECT COUNT(*) FROM chromosomes WHERE species_id IN ({marks})) AS chromosome_count,
+            (SELECT COUNT(*) FROM markers WHERE chromosome_id IN ({chromosomes})) AS marker_count,
+            (SELECT COUNT(*) FROM microhaplotypes WHERE marker_id IN ({markers})) AS microhaplotype_count,
+            (SELECT COUNT(*) FROM variants WHERE marker_id IN ({markers})) AS variant_count,
+            (SELECT COUNT(DISTINCT project_id) FROM samples WHERE species_id IN ({marks})) AS project_count,
+            (SELECT COUNT(*) FROM samples WHERE species_id IN ({marks})) AS sample_count,
+            (SELECT COUNT(*) FROM microhaplotype_samples WHERE sample_id IN ({samples})) AS association_count
+    """
+    params = tuple(species_ids) * (query.count("?") // len(species_ids))
+    row = db.execute_query(query, params)[0]
+    return {key: int(value or 0) for key, value in row.items()}
 
 
 def get_species_statistics(db: DatabaseManager, species_id: int) -> Dict[str, Any]:

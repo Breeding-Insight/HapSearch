@@ -6,7 +6,7 @@ Tab-based interface variant of the microhaplotype analysis platform
 
 from dash import dcc, html, Input, Output, State, callback, ctx, no_update
 import dash_bootstrap_components as dbc
-from flask import redirect, session, send_from_directory
+from flask import jsonify, redirect, session, send_from_directory
 
 import config
 import logging
@@ -17,6 +17,7 @@ import os
 # sign-ins) are logged at INFO; everything else stays at WARNING.
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 logging.getLogger('auth').setLevel(logging.INFO)
+logger = logging.getLogger('auth.app')
 
 # Add current directory to path for database/design imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -28,6 +29,7 @@ from auth.orcid import auth_bp
 server.register_blueprint(auth_bp)
 
 # Import session helpers
+from auth import access
 from auth.session import is_authenticated, get_current_user, start_local_dev_session
 from database import allele_filter
 from auth.user_store import get_user_store
@@ -108,12 +110,38 @@ def favicon():
     )
 
 
+DASH_UPDATE_PATH = '/app/_dash-update-component'
+
+
+def _deny(status, message):
+    return jsonify({'error': message}), status
+
+
 @server.before_request
 def require_auth_for_app():
     """Redirect unauthenticated users away from the Dash app."""
     from flask import request
     # Skip static files and auth routes
     if request.path.startswith('/static/') or request.path.startswith('/auth/'):
+        return
+    # Callback requests carry all the data, so they need a signed-in user and
+    # must only touch species that user may see (auth/access.py).
+    if request.path == DASH_UPDATE_PATH:
+        if config.BYPASS_ORCID_AUTH:
+            start_local_dev_session()
+        if not is_authenticated():
+            return _deny(401, 'Sign in to use HapSearch.')
+        if not access.refresh_access():
+            session.clear()
+            return _deny(401, 'Your access to HapSearch has ended.')
+        payload = request.get_json(silent=True) or {}
+        if access.species_missing(payload):
+            # 204 is Dash's "no update": the outputs keep what they show.
+            return '', 204
+        reason = access.check_dash_request(payload)
+        if reason:
+            logger.warning("Refused callback for %s: %s", session.get('orcid_id'), reason)
+            return _deny(403, 'You do not have access to that species.')
         return
     # Always allow Dash internals to load (js/css bundles, assets, layout/deps endpoints)
     # otherwise the browser receives redirects/html instead of scripts and the app crashes.
@@ -283,15 +311,28 @@ def load_global_species(_):
         from database.queries import get_all_species
 
         db = DatabaseManager()
-        species = get_all_species(db)
+        allowed = access.allowed_species_ids(db)
+        species = [s for s in get_all_species(db) if allowed is None or s['id'] in allowed]
         options = [{'label': f"{s['common_name']} ({s['name']})", 'value': s['id']}
                    for s in species]
 
         default_value = species[0]['id'] if species else None
 
         return options, default_value, default_value
-    except Exception as e:
+    except Exception:
+        logger.exception("Could not load the species list")
         return [], None, None
+
+
+@callback(
+    Output('global-species-dropdown', 'placeholder'),
+    Input('global-species-dropdown', 'options'),
+)
+def explain_empty_species_list(options):
+    """Say why the picker is empty for someone with no species shared."""
+    if options:
+        return "Select a species..."
+    return "No species have been shared with your account"
 
 
 @callback(
@@ -351,7 +392,7 @@ def update_db_status(active_tab, app_initialized):
         from database.queries import get_database_statistics
 
         db = DatabaseManager()
-        stats = get_database_statistics(db)
+        stats = get_database_statistics(db, access.allowed_species_ids(db))
 
         return html.Div([
             html.Small([

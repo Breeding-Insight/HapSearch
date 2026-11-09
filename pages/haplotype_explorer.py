@@ -40,6 +40,9 @@ from database.queries import (
     _deduplicate_projects,
 )
 from pages.collaborator_rows import build_collaborator_rows_from_contacts
+from pages.export_controls import clean_filename, filename_field
+
+DEFAULT_SAMPLES_FILENAME = 'microhaplotype_samples'
 
 
 def _require_ag_grid():
@@ -172,6 +175,18 @@ layout = dbc.Container([
     dbc.Row([
         # Left panel: Search and browse with separate scrolling
         dbc.Col([
+            # Shown only while the panel is hidden: a slim rail that names the
+            # panel and opens it again.
+            html.Button(
+                [
+                    html.I(className="fas fa-angles-right"),
+                    html.Span("Search & Browse", className="browse-rail-label"),
+                ],
+                id='haplotype-expand-rail',
+                className="browse-expand-rail",
+                title="Show the Search & Browse panel",
+                **{'aria-label': "Show the Search & Browse panel"},
+            ),
             html.Div([
                 # Filters section (not sticky)
                 dbc.Card([
@@ -182,12 +197,13 @@ layout = dbc.Container([
                                 html.Span("Search & Browse", id='haplotype-search-title')
                             ], className="mb-0"),
                             dbc.Button(
-                                html.I(className="fas fa-chevron-left", id='haplotype-minimize-icon'),
+                                [html.I(className="fas fa-angles-left me-1"), "Hide"],
                                 id='haplotype-minimize-btn',
-                                color="link",
+                                color="secondary",
+                                outline=True,
                                 size="sm",
-                                className="float-end p-0",
-                                style={'color': '#000000', 'textDecoration': 'none'}
+                                className="browse-hide-btn",
+                                title="Hide this panel to give the details the full width",
                             )
                         ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'width': '100%'})
                     ]),
@@ -325,7 +341,7 @@ layout = dbc.Container([
                             )
                         ], id='haplotype-frequency-container')
                     ], id='haplotype-filters-body')
-                ], style={'flexShrink': '0'}, className="mb-2", id='haplotype-filters-card'),
+                ], style={'flexShrink': '0'}, className="mb-2 browse-filters-card", id='haplotype-filters-card'),
 
                 # Results section (no internal scrolling; page scroll only)
                 dbc.Card([
@@ -361,8 +377,9 @@ layout = dbc.Container([
                         )
                     ])
                 ], id='haplotype-results-card')
-            ], style={'display': 'flex', 'flexDirection': 'column'}, id='haplotype-left-panel-content')
-        ], id='haplotype-left-col', width=3),
+            ], style={'display': 'flex', 'flexDirection': 'column'}, id='haplotype-left-panel-content',
+               className="browse-left-content")
+        ], id='haplotype-left-col', className="browse-left-col"),
 
         # Right panel: Details
         dbc.Col([
@@ -401,13 +418,30 @@ layout = dbc.Container([
                                         placeholder='Search samples...',
                                         debounce=True,
                                     ),
-                                    dbc.Button(
-                                        [html.I(className="fas fa-download me-2"), "Save CSV"],
-                                        id='samples-download-btn',
+                                    dbc.DropdownMenu(
+                                        [
+                                            html.Div([
+                                                html.H6("Save Samples", className="mb-3"),
+                                                filename_field(
+                                                    'samples-download-filename',
+                                                    None,
+                                                    'csv',
+                                                ),
+                                                dbc.Button(
+                                                    [html.I(className="fas fa-download me-2"), "Save CSV"],
+                                                    id='samples-download-btn',
+                                                    color="primary",
+                                                    size="sm",
+                                                    className="w-100",
+                                                ),
+                                            ], className="px-3 py-2", style={'width': '300px'}),
+                                        ],
+                                        label=[html.I(className="fas fa-floppy-disk me-2"), "Save"],
                                         color="secondary",
-                                        outline=True,
+                                        toggle_class_name="haplo-action-btn text-nowrap",
                                         size="sm",
-                                        className="haplo-action-btn text-nowrap",
+                                        align_end=True,
+                                        className="d-inline-block",
                                     ),
                                 ], className="d-flex align-items-center gap-2 mb-3"),
                             ], id='samples-search-container'),
@@ -431,8 +465,8 @@ layout = dbc.Container([
                     ], id='samples-section-wrapper', style={'display': 'none'})
                 ])
             ])
-        ], id='haplotype-right-col', width=9)
-    ])
+        ], id='haplotype-right-col', className="browse-right-col")
+    ], id='haplotype-layout-row', className="browse-layout")
 
 ], fluid=True)
 
@@ -1175,13 +1209,23 @@ def _samples_download_name(db, haplotype):
 
 
 @app.callback(
+    Output('samples-download-filename', 'value'),
+    Input('samples-download-name-store', 'data'),
+)
+def show_samples_download_name(download_name):
+    """Offer the default name in the Save menu; the user can change it there."""
+    return download_name or DEFAULT_SAMPLES_FILENAME
+
+
+@app.callback(
     Output('samples-download', 'data'),
     Input('samples-download-btn', 'n_clicks'),
     State('samples-data-store', 'data'),
+    State('samples-download-filename', 'value'),
     State('samples-download-name-store', 'data'),
     prevent_initial_call=True
 )
-def download_samples_csv(n_clicks, samples_data, download_name):
+def download_samples_csv(n_clicks, samples_data, typed_name, download_name):
     """Save every sample for the selected microhaplotype as a CSV."""
     if not n_clicks or not samples_data:
         return no_update
@@ -1190,7 +1234,8 @@ def download_samples_csv(n_clicks, samples_data, download_name):
     writer.writerow(['Sample Name', 'Owners'])
     for row in samples_data:
         writer.writerow([row.get('Sample Name', ''), row.get('Owners', '')])
-    filename = f"{download_name or 'microhaplotype_samples'}.csv"
+    name = clean_filename(typed_name, download_name or DEFAULT_SAMPLES_FILENAME, 'csv')
+    filename = f"{name}.csv"
     return dict(content=buffer.getvalue(), filename=filename, type='text/csv')
 
 
@@ -1438,43 +1483,20 @@ def navigate_to_marker_explorer(n_clicks):
     return {'marker_id': marker_id}
 
 
-# Toggle left panel minimize/expand
+# Hide or show the Search & Browse panel
 @app.callback(
-    [Output('haplotype-left-panel-minimized', 'data'),
-     Output('haplotype-left-col', 'width'),
-     Output('haplotype-right-col', 'width'),
-     Output('haplotype-filters-body', 'style'),
-     Output('haplotype-results-card', 'style'),
-     Output('haplotype-minimize-icon', 'className'),
-     Output('haplotype-search-title', 'style'),
-     Output('haplotype-search-icon', 'style')],
+    Output('haplotype-left-panel-minimized', 'data'),
     Input('haplotype-minimize-btn', 'n_clicks'),
-    State('haplotype-left-panel-minimized', 'data'),
+    Input('haplotype-expand-rail', 'n_clicks'),
     prevent_initial_call=True
 )
-def toggle_haplotype_left_panel(n_clicks, is_minimized):
-    """Toggle left panel between minimized and expanded states"""
-    new_state = not is_minimized
-    
-    if new_state:  # Minimizing
-        return (
-            True,  # Store state
-            1,     # Left column width (minimized)
-            11,    # Right column width (expanded)
-            {'display': 'none'},  # Hide filters
-            {'display': 'none'},  # Hide results
-            "fas fa-chevron-right",  # Change icon to right chevron
-            {'display': 'none'},  # Hide title text
-            {'display': 'none'}  # Hide search icon
-        )
-    else:  # Expanding
-        return (
-            False,  # Store state
-            3,      # Left column width (normal)
-            9,      # Right column width (normal)
-            {},     # Show filters
-            {},  # Show results (no internal scrolling)
-            "fas fa-chevron-left",  # Change icon to left chevron
-            {},     # Show title text
-            {'marginRight': '0.5rem'}  # Show search icon with margin
-        )
+def toggle_haplotype_left_panel(_hide_clicks, _rail_clicks):
+    return ctx.triggered_id == 'haplotype-minimize-btn'
+
+
+@app.callback(
+    Output('haplotype-layout-row', 'className'),
+    Input('haplotype-left-panel-minimized', 'data'),
+)
+def apply_haplotype_panel_state(is_minimized):
+    return "browse-layout is-collapsed" if is_minimized else "browse-layout"

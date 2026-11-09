@@ -349,12 +349,6 @@ body {
   color: var(--app-ink-muted);
 }
 
-.selected-alleles-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
 /* Alignment tab: allele names (row labels) open the allele in Microhaplotypes
    (assets/msa_allele_links.js). */
 #msa-graph .ytick text {
