@@ -7,8 +7,15 @@ inside the image. Local development and the VM keep using the SQLite
 dict shape, so the login check and CLI do not care which is used. The app
 itself only reads; changes are made with scripts/manage_users.py or the
 Firestore console.
+
+Each user also has a ``species`` list: the species (by scientific or common
+name) a ``user`` may see. Admins see every species whatever the list says, and
+a ``user`` with an empty list sees none. Names rather than database ids are
+stored because the SQLite database is rebuilt from source files, which can
+renumber species, while the allowlist lives on in Firestore.
 """
 
+import json
 import re
 import threading
 from datetime import datetime, timezone
@@ -47,6 +54,30 @@ def _validate_role(role: str) -> str:
     return role
 
 
+def normalize_species(names) -> List[str]:
+    """Return species names trimmed, de-duplicated (ignoring case) and sorted."""
+    if names is None:
+        return []
+    if isinstance(names, str):
+        names = names.split(",")
+    seen = {}
+    for name in names:
+        name = str(name or "").strip()
+        if name and name.lower() not in seen:
+            seen[name.lower()] = name
+    return sorted(seen.values(), key=str.lower)
+
+
+def _stored_species(value: Any) -> List[str]:
+    """Read the species list as stored: a list (Firestore) or JSON text (SQLite)."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = value.split(",")
+    return normalize_species(value if isinstance(value, (list, tuple, str)) else None)
+
+
 def _format_time(value: Any) -> Optional[str]:
     if value is None or value == "":
         return None
@@ -64,6 +95,7 @@ def _user_record(values: Dict[str, Any], orcid_id: str) -> Dict[str, Any]:
         "email": values.get("email"),
         "role": values.get("role") or "user",
         "is_active": bool(values.get("is_active", False)),
+        "species": _stored_species(values.get("species")),
         "created_at": _format_time(values.get("created_at")),
     }
 
@@ -88,9 +120,14 @@ class SqliteUserStore:
                 email TEXT,
                 role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
                 is_active INTEGER DEFAULT 1,
+                species TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Tables made before per-species access have no species column.
+        columns = {row["name"] for row in self.db.execute_query("PRAGMA table_info(users)")}
+        if "species" not in columns:
+            self.db.execute_update("ALTER TABLE users ADD COLUMN species TEXT")
 
     def assert_ready(self) -> None:
         self.db.execute_query("SELECT 1 FROM users LIMIT 1")
@@ -108,15 +145,16 @@ class SqliteUserStore:
         return [_user_record(row, row["orcid_id"]) for row in rows]
 
     def add_user(self, orcid_id: str, display_name: str = None, email: str = None,
-                 role: str = "user") -> Dict[str, Any]:
+                 role: str = "user", species=None) -> Dict[str, Any]:
         orcid_id = normalize_orcid(orcid_id)
         _validate_role(role)
         self._ensure_table()
         if self.db.execute_query("SELECT 1 FROM users WHERE orcid_id = ?", (orcid_id,)):
             raise UserExistsError(f"User with ORCID {orcid_id} already exists.")
         self.db.execute_update(
-            "INSERT INTO users (orcid_id, display_name, email, role) VALUES (?, ?, ?, ?)",
-            (orcid_id, display_name or None, email or None, role),
+            "INSERT INTO users (orcid_id, display_name, email, role, species) VALUES (?, ?, ?, ?, ?)",
+            (orcid_id, display_name or None, email or None, role,
+             json.dumps(normalize_species(species))),
         )
         return self.get_active_user(orcid_id)
 
@@ -128,6 +166,14 @@ class SqliteUserStore:
     def set_role(self, orcid_id: str, role: str) -> bool:
         return self.db.execute_update(
             "UPDATE users SET role = ? WHERE orcid_id = ?", (_validate_role(role), orcid_id)
+        ) > 0
+
+    def set_species(self, orcid_id: str, species) -> bool:
+        """Replace the species a user may see."""
+        self._ensure_table()
+        return self.db.execute_update(
+            "UPDATE users SET species = ? WHERE orcid_id = ?",
+            (json.dumps(normalize_species(species)), orcid_id),
         ) > 0
 
     def remove_user(self, orcid_id: str) -> bool:
@@ -182,7 +228,7 @@ class FirestoreUserStore:
         return sorted(users, key=lambda user: (user["created_at"] or "", user["orcid_id"]))
 
     def add_user(self, orcid_id: str, display_name: str = None, email: str = None,
-                 role: str = "user", *, is_active: bool = True,
+                 role: str = "user", species=None, *, is_active: bool = True,
                  created_at: Optional[datetime] = None) -> Dict[str, Any]:
         orcid_id = normalize_orcid(orcid_id)
         _validate_role(role)
@@ -191,6 +237,7 @@ class FirestoreUserStore:
             "display_name": display_name or None,
             "email": email or None,
             "role": role,
+            "species": normalize_species(species),
             "is_active": bool(is_active),
             "created_at": created_at or datetime.now(timezone.utc),
         }
@@ -213,6 +260,10 @@ class FirestoreUserStore:
 
     def set_role(self, orcid_id: str, role: str) -> bool:
         return self._update(orcid_id, {"role": _validate_role(role)})
+
+    def set_species(self, orcid_id: str, species) -> bool:
+        """Replace the species a user may see."""
+        return self._update(orcid_id, {"species": normalize_species(species)})
 
     def remove_user(self, orcid_id: str) -> bool:
         if self._get(orcid_id) is None:

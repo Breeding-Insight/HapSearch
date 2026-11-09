@@ -84,14 +84,27 @@ person is a `users/{orcid_id}` document:
   "orcid_id": "0000-0000-0000-0000",
   "display_name": "Example User",
   "email": "user@example.org",
-  "role": "admin",
+  "role": "user",
+  "species": ["Medicago sativa", "Pecan"],
   "is_active": true
 }
 ```
 
-`created_at` is set when someone is added; `role` is kept for consistency with the
-other BI apps but HapSearch does not use it. Set `is_active` to `false` to remove
-access; it takes effect at the person's next sign-in.
+`created_at` is set when someone is added. `role` decides which species a person
+sees: an `admin` sees every species, and a `user` sees only the species listed in
+`species`, by scientific or common name (ignoring case). A `user` with no
+`species` sees none, so people added before per-species access need species
+granted, or the `admin` role. Names are used rather than database ids because a
+database rebuild can renumber species. A name that matches no species grants
+nothing until that species is loaded.
+
+The app re-reads each signed-in person's record every five minutes, so a change
+to `role`, `species` or `is_active` applies within five minutes, without them
+having to sign in again. Set `is_active` to `false` to remove access.
+
+The species picker only lists allowed species, and every callback request is
+also checked on the server (`auth/access.py`): a request that names a species,
+locus or microhaplotype from another species is refused with a 403.
 
 There is no user-management page in the app. Edit the documents in the Firestore
 console, or use the CLI with your own Application Default Credentials
@@ -100,6 +113,10 @@ console, or use the CLI with your own Application Default Credentials
 ```bash
 export GOOGLE_CLOUD_PROJECT=PROJECT_ID FIRESTORE_DATABASE=hapsearch-db
 python scripts/manage_users.py --store firestore add --orcid 0000-0000-0000-0000 --name "Example User"
+python scripts/manage_users.py --store firestore add --orcid 0000-0000-0000-0000 --species Alfalfa Pecan
+python scripts/manage_users.py --store firestore grant-species --orcid 0000-0000-0000-0000 --species Blueberry
+python scripts/manage_users.py --store firestore revoke-species --orcid 0000-0000-0000-0000 --species Pecan
+python scripts/manage_users.py --store firestore set-species --orcid 0000-0000-0000-0000 --species Alfalfa
 python scripts/manage_users.py --store firestore list
 python scripts/manage_users.py --store firestore deactivate --orcid 0000-0000-0000-0000
 python scripts/manage_users.py --store firestore copy-from-sqlite

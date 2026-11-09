@@ -12,16 +12,18 @@ logger = logging.getLogger(__name__)
 
 def start_local_dev_session():
     """Create a local development session when ORCID auth is bypassed."""
+    from auth.access import store_access
     session['orcid_id'] = config.BYPASS_DEV_ORCID
     session['user_name'] = config.BYPASS_DEV_NAME
-    session['user_role'] = config.BYPASS_DEV_ROLE
+    store_access(config.BYPASS_DEV_ROLE, config.BYPASS_DEV_SPECIES, refreshable=False)
 
 
 def get_current_user():
     """Get the current authenticated user from the Flask session.
     
     Returns:
-        dict with orcid_id, user_name, user_role or None if not authenticated.
+        dict with orcid_id, user_name, user_role, user_species or None if not
+        authenticated.
     """
     orcid_id = session.get('orcid_id')
     if not orcid_id:
@@ -30,6 +32,7 @@ def get_current_user():
         'orcid_id': orcid_id,
         'user_name': session.get('user_name', ''),
         'user_role': session.get('user_role', 'user'),
+        'user_species': list(session.get('user_species') or []),
     }
 
 

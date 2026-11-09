@@ -67,6 +67,9 @@ BYPASS_AUTH_WHITELIST = os.getenv('BYPASS_AUTH_WHITELIST', 'false').lower() in (
 BYPASS_DEV_ORCID = os.getenv('BYPASS_DEV_ORCID', '0009-0002-4298-0820')
 BYPASS_DEV_NAME = os.getenv('BYPASS_DEV_NAME', 'Tyler Slonecki')
 BYPASS_DEV_ROLE = os.getenv('BYPASS_DEV_ROLE', 'admin')
+# Species the bypass session may see when BYPASS_DEV_ROLE is 'user'
+# (comma-separated scientific or common names), to try per-species access.
+BYPASS_DEV_SPECIES = [s.strip() for s in os.getenv('BYPASS_DEV_SPECIES', '').split(',') if s.strip()]
 
 # ORCID OAuth2 configuration
 ORCID_CLIENT_ID = os.getenv('ORCID_CLIENT_ID', '')
