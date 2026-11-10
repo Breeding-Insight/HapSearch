@@ -3,16 +3,20 @@
 
 ``data_sources.toml`` (in this repository) lists each species' data repository,
 the FASTA version to publish (e.g. v055, which also selects the matching
-project matrix) and the git tag, commit or branch to fetch. Every build starts from an empty
-database, fetches each source at its pinned ref, runs every import, optimizes
-the file, checks the result and compares it with the previous build. The output
-file is only replaced when every check passes. Pinning means a rebuild only
-changes the species whose ref you changed.
+project matrix) and the git tag, commit or branch to fetch. A build fetches each
+source at its pinned ref, runs the imports, aligns the microhaplotypes,
+optimizes the file, checks the result and compares it with the previous build.
+The output file is only replaced when every check passes.
+
+With --reuse PREVIOUS.db the build starts from the previous database and only
+imports the species whose input files changed (see scripts/incremental_build.py);
+otherwise, or when reuse is not safe, every species is imported from scratch.
 
     python scripts/build_database.py                         # pinned refs
     python scripts/build_database.py --versions alfalfa=v056  # one-off version
     python scripts/build_database.py --refs alfalfa=master   # one-off git ref
     python scripts/build_database.py --data-repo ../alfalfa_haplotype_db  # local checkout
+    python scripts/build_database.py --reuse data/hapsearch.db  # only changed species
 
 Each data repository describes its inputs in a ``manifest.toml``, normally
 ``data/hapSearch/manifest.toml``. Paths in the manifest are relative to its
@@ -40,7 +44,7 @@ import subprocess
 import sys
 import time
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +52,7 @@ sys.path.insert(0, REPO_ROOT)
 
 import config  # noqa: E402
 from database.db_manager import DatabaseManager  # noqa: E402
+from scripts import incremental_build  # noqa: E402
 from scripts.align_microhaplotypes import AlignmentError, align_database  # noqa: E402
 from scripts.import_sample_presence import PRESENCE_FILE_SUFFIXES  # noqa: E402
 from scripts.init_database import init_database  # noqa: E402
@@ -491,7 +496,12 @@ def _run_matrix_import(script: str, path: str, args: List[str], db_path: str) ->
         raise
 
 
-def run_imports(plan: BuildPlan, db_path: str) -> None:
+def run_imports(plan: BuildPlan, db_path: str, only: Optional[set] = None) -> None:
+    """Import the plan's species, or just those named in `only`."""
+    if only is not None:
+        plan = replace(plan, species=[sp for sp in plan.species if sp.name in only])
+        if not plan.species:
+            return
     metadata_args = [
         "--project-mapping", plan.project_mapping,
         "--owner-contacts", plan.owner_contacts,
@@ -530,8 +540,12 @@ def _count_matrix_rows(path: str) -> int:
         return max(sum(1 for line in handle if line.strip()) - 1, 0)
 
 
-def validate(plan: BuildPlan, db_path: str) -> List[str]:
-    """Return a list of problems; an empty list means the build is good."""
+def validate(plan: BuildPlan, db_path: str, kept: Optional[set] = None) -> List[str]:
+    """Return a list of problems; an empty list means the build is good.
+
+    Species in `kept` were copied from the previous database, whose build
+    already checked their matrices, so only their markers are checked here.
+    """
     problems = []
     conn = sqlite3.connect(db_path)
     try:
@@ -552,6 +566,8 @@ def validate(plan: BuildPlan, db_path: str) -> List[str]:
                 continue
             if not row[1] or not row[2]:
                 problems.append(f"{species.name}: no markers or microhaplotypes were imported")
+            if kept and species.name in kept:
+                continue
 
             for path, entity_type in (
                 [(p, "sample") for p in species.sample_presence]
@@ -613,7 +629,8 @@ def table_counts(db_path: str) -> Dict[str, int]:
         conn.close()
 
 
-def write_build_info(db_path: str, builds: List[Tuple["DataSource", BuildPlan]]) -> Dict[str, str]:
+def write_build_info(db_path: str, builds: List[Tuple["DataSource", BuildPlan]],
+                     extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """Record what went into this database so the live version can be traced."""
     data_sources = []
     for source, plan in builds:
@@ -632,6 +649,7 @@ def write_build_info(db_path: str, builds: List[Tuple["DataSource", BuildPlan]])
         "built_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "data_sources": json.dumps(data_sources, sort_keys=True),
         "data_version": data_version([source for source, _ in builds]),
+        **(extra or {}),
     }
     conn = sqlite3.connect(db_path)
     try:
@@ -818,19 +836,83 @@ def local_source(path: str, manifest: Optional[str] = None) -> DataSource:
 
 # --- Build ----------------------------------------------------------------
 
+class _FullBuildNeeded(Exception):
+    """Reusing the previous database would not give what a full build gives."""
+
+
 def build(sources: List[DataSource], output: str, compare_to: Optional[str], cache_dir: str,
-          version_file: Optional[str] = None) -> bool:
+          version_file: Optional[str] = None, reuse_from: Optional[str] = None) -> bool:
     staging = os.path.abspath(output) + ".building"
     try:
-        return _build(sources, output, compare_to, cache_dir, version_file)
+        return _build(sources, output, compare_to, cache_dir, version_file, reuse_from)
     finally:
         # A failed build must not leave a half-built file around.
         if os.path.exists(staging):
             os.remove(staging)
 
 
+def _full_build(builds, staging: str) -> None:
+    if not init_database(force=True, db_path=staging):
+        raise BuildError("could not create the database schema")
+    for source, plan in builds:
+        _log(f"\n##### {source.name} ({plan.manifest_path}) #####")
+        run_imports(plan, staging)
+    _log("\n=== Aligning microhaplotypes to their Ref (BIGr settings, in R) ===")
+    try:
+        align_database(staging, log=_log)
+    except AlignmentError as exc:
+        raise BuildError(str(exc)) from exc
+
+
+def _incremental_build(builds, staging: str, previous: str,
+                       reuse: "incremental_build.ReusePlan") -> None:
+    """Start from the previous database and rebuild only the changed species.
+
+    Raises _FullBuildNeeded when the result could differ from a full build.
+    """
+    import shutil
+
+    changed = set(reuse.changed)
+    shutil.copyfile(previous, staging)
+    conn = sqlite3.connect(staging)
+    try:
+        if incremental_build.unattributed_artifacts(conn):
+            raise _FullBuildNeeded("a presence matrix in the previous database spans several species")
+        replaced = reuse.changed + reuse.removed
+        shared = replaced and incremental_build.shared_rows(conn, replaced, reuse.kept)
+        if shared:
+            raise _FullBuildNeeded(shared)
+        for name in replaced:
+            _log(f"  Deleting {name} from the previous database")
+            incremental_build.delete_species(conn, name)
+        incremental_build.delete_unused_projects_and_contacts(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    for source, plan in builds:
+        if any(species.name in changed for species in plan.species):
+            _log(f"\n##### {source.name} ({plan.manifest_path}) #####")
+            run_imports(plan, staging, only=changed)
+
+    if reuse.changed:
+        conn = sqlite3.connect(staging)
+        try:
+            shared = incremental_build.shared_rows(conn, reuse.changed, reuse.kept)
+        finally:
+            conn.close()
+        if shared:
+            raise _FullBuildNeeded(shared)
+
+    _log("\n=== Aligning microhaplotypes to their Ref (BIGr settings, in R) ===")
+    try:
+        align_database(staging, log=_log, missing_only=True)
+    except AlignmentError as exc:
+        raise BuildError(str(exc)) from exc
+
+
 def _build(sources: List[DataSource], output: str, compare_to: Optional[str], cache_dir: str,
-           version_file: Optional[str]) -> bool:
+           version_file: Optional[str], reuse_from: Optional[str] = None) -> bool:
     output = os.path.abspath(output)
     staging = output + ".building"
 
@@ -856,18 +938,39 @@ def _build(sources: List[DataSource], output: str, compare_to: Optional[str], ca
             owners[species.name] = source.name
 
     _log(f"\nBuilding {output} from: {data_version(sources)}")
+    kept: set = set()
     try:
-        if not init_database(force=True, db_path=staging):
-            return False
-        for source, plan in builds:
-            _log(f"\n##### {source.name} ({plan.manifest_path}) #####")
-            run_imports(plan, staging)
-        _log("\n=== Aligning microhaplotypes to their Ref (BIGr settings, in R) ===")
-        try:
-            align_database(staging, log=_log)
-        except AlignmentError as exc:
-            raise BuildError(str(exc)) from exc
-        info = write_build_info(staging, builds)
+        fingerprint = incremental_build.code_fingerprint()
+        species_inputs = {
+            species.name: incremental_build.species_fingerprint(species, plan)
+            for _, plan in builds for species in plan.species
+        }
+        if reuse_from:
+            reuse = incremental_build.plan_reuse(reuse_from, fingerprint, species_inputs)
+        else:
+            reuse = incremental_build.ReusePlan(full_build_reason="--reuse was not given")
+
+        if reuse.incremental:
+            _log(f"\n=== Reusing {reuse_from} ===")
+            _log(f"  Unchanged, kept: {', '.join(reuse.kept)}")
+            _log(f"  Changed, rebuilt: {', '.join(reuse.changed) or 'none'}")
+            if reuse.removed:
+                _log(f"  No longer listed, deleted: {', '.join(reuse.removed)}")
+            try:
+                _incremental_build(builds, staging, reuse_from, reuse)
+                kept = set(reuse.kept)
+            except _FullBuildNeeded as exc:
+                _log(f"\nBuilding every species from scratch instead: {exc}")
+                _full_build(builds, staging)
+        else:
+            _log(f"\nBuilding every species from scratch: {reuse.full_build_reason}")
+            _full_build(builds, staging)
+
+        info = write_build_info(staging, builds, {
+            "code_fingerprint": fingerprint,
+            "species_inputs": json.dumps(species_inputs),
+            "reused_species": json.dumps(sorted(kept)),
+        })
         _log("\nOptimizing...")
         DatabaseManager(db_path=staging, read_only=False).optimize(vacuum=True)
     except BuildError as exc:
@@ -876,7 +979,7 @@ def _build(sources: List[DataSource], output: str, compare_to: Optional[str], ca
 
     _log("\nChecking the result...")
     problems = list(dict.fromkeys(
-        problem for _, plan in builds for problem in validate(plan, staging)))
+        problem for _, plan in builds for problem in validate(plan, staging, kept)))
     if problems:
         _log("Build failed checks; the existing database was not replaced:")
         for problem in problems:
@@ -946,6 +1049,12 @@ def main() -> None:
         help="Previous database to compare row counts with (default: the current output file)",
     )
     parser.add_argument(
+        "--reuse",
+        metavar="PREVIOUS_DB",
+        help="Start from this previously built database and only rebuild the species whose "
+             "inputs changed; falls back to a full build when that is not safe",
+    )
+    parser.add_argument(
         "--cache-dir",
         default=os.path.join(REPO_ROOT, ".build-cache"),
         help="Where fetched data repositories and files are kept",
@@ -979,7 +1088,9 @@ def main() -> None:
         sys.exit(1)
 
     compare_to = args.compare_to or (args.output if os.path.isfile(args.output) else None)
-    ok = build(sources, args.output, compare_to, args.cache_dir, args.version_file)
+    compare_to = compare_to or args.reuse
+    ok = build(sources, args.output, compare_to, args.cache_dir, args.version_file,
+               reuse_from=args.reuse)
     sys.exit(0 if ok else 1)
 
 

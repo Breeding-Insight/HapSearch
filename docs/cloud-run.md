@@ -19,7 +19,8 @@ stored image and Firestore storage.
    ```
 
    It is safe to re-run. It creates the Artifact Registry repository (keeping the
-   last 5 images), the `hapsearch-db` Firestore database, the app and Cloud Build
+   last 5 images), the `PROJECT_ID-hapsearch-build` bucket (the last published
+   database, which each build starts from), the `hapsearch-db` Firestore database, the app and Cloud Build
    service accounts with only the roles below, and the secrets. It copies the
    shared ORCID credentials from AlloMate's or HapApp's secrets when present, and
    can add the first allowlisted user.
@@ -39,11 +40,13 @@ stored image and Firestore storage.
 
 ## How the data gets into the image
 
-The database is rebuilt from scratch from the files in
-`Breeding-Insight/alfalfa_haplotype_db` and baked into the image. Cloud Build
-does this on every run (`cloudbuild.yaml`): clone the data repository at a tag,
-run `scripts/build_database.py` (which also aligns every microhaplotype to its
-Ref in R with BIGr's settings), build the image, deploy. Cloud Run switches
+The database is built from the species data repositories listed in
+`data_sources.toml` and baked into the image. Cloud Build does this on every run
+(`cloudbuild.yaml`): fetch the last published database from the
+`PROJECT_ID-hapsearch-build` bucket, clone each data repository at its ref, run
+`scripts/build_database.py --reuse` (which imports only the species whose files
+changed and aligns their microhaplotypes to their Ref in R with BIGr's settings),
+build the image, deploy, then publish the new database to the bucket. Cloud Run switches
 revisions atomically, so visitors never see a half-updated database. See
 [updating-data.md](updating-data.md) for adding data and publishing.
 
@@ -142,7 +145,8 @@ stops with a clear message if the database name or IAM role is wrong.
 
 and `hapsearch-cloud-build`, the trigger's identity, with `roles/run.admin`,
 `roles/artifactregistry.writer`, `roles/logging.logWriter`,
-`roles/cloudbuild.readTokenAccessor` (read-only tokens for linked repositories), and
+`roles/cloudbuild.readTokenAccessor` (read-only tokens for linked repositories),
+`roles/storage.objectAdmin` on the `PROJECT_ID-hapsearch-build` bucket only, and
 permission to deploy as `hapsearch-cloud-run`. No JSON keys or GitHub tokens are
 created.
 
