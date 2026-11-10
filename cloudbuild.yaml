@@ -25,8 +25,30 @@ substitutions:
   # Public landing page (landing/ on GitHub Pages). Signed-out visitors and
   # sign-outs are sent here; empty sends visitors straight to ORCID sign-in.
   _LANDING_URL: "https://breeding-insight.github.io/HapSearch/"
+  # "true" imports every species from scratch instead of starting from the
+  # last published database (see scripts/incremental_build.py).
+  _FULL_REBUILD: "false"
 
 steps:
+  # 0. Fetch the database the last successful build published, so this build
+  #    only imports the species whose data changed. The bucket is created by
+  #    scripts/setup_cloud_run.sh; without a published database (or with
+  #    _FULL_REBUILD=true) every species is imported.
+  - id: fetch-previous-database
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [[ "${_FULL_REBUILD}" == "true" ]]; then
+          echo "_FULL_REBUILD=true: importing every species"
+        elif gcloud storage objects describe "gs://${PROJECT_ID}-hapsearch-build/hapsearch.db" > /dev/null 2>&1; then
+          gcloud storage cp "gs://${PROJECT_ID}-hapsearch-build/hapsearch.db" /builder/home/previous.db
+        else
+          echo "No published database in gs://${PROJECT_ID}-hapsearch-build yet: importing every species"
+        fi
+
   # 1. Fetch every data source at its ref, then build and check the database.
   #    The build stops here if any import or check fails, so nothing is
   #    deployed. Sources are fetched outside /workspace to keep them out of the
@@ -48,7 +70,12 @@ steps:
         apt-get update -qq && apt-get install -y -qq --no-install-recommends \
           git r-base-core r-bioc-pwalign > /dev/null
         pip install --quiet --root-user-action=ignore -r requirements.txt
+        reuse=""
+        if [[ -f /builder/home/previous.db ]]; then
+          reuse="--reuse=/builder/home/previous.db"
+        fi
         python -W ignore scripts/build_database.py \
+          $${reuse:+"$$reuse"} \
           --sources data_sources.toml \
           --versions "${_VERSIONS}" \
           --refs "${_REFS}" \
@@ -101,8 +128,27 @@ steps:
           --update-secrets="SECRET_KEY=hapsearch-secret-key:latest,ORCID_CLIENT_ID=hapsearch-orcid-client-id:latest,ORCID_CLIENT_SECRET=hapsearch-orcid-client-secret:latest" \
           --quiet
 
+  # 5. Publish the database that is now live, for the next build to start from.
+  #    Runs only after a successful deploy.
+  - id: publish-database
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if ! gcloud storage cp data/hapsearch.db "gs://${PROJECT_ID}-hapsearch-build/hapsearch.db"; then
+          echo "The new version is deployed, but the database could not be saved to"
+          echo "gs://${PROJECT_ID}-hapsearch-build, so the next build will import every species."
+          echo "Re-run scripts/setup_cloud_run.sh to create the bucket and grant access."
+          exit 1
+        fi
+
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${BUILD_ID}
+
+# A full build of every species can take a while; the default limit is 60 min.
+timeout: 7200s
 
 options:
   logging: CLOUD_LOGGING_ONLY

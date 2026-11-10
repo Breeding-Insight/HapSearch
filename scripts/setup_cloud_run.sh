@@ -8,7 +8,7 @@
 #   cd HapSearch && bash scripts/setup_cloud_run.sh
 #
 # Safe to re-run: anything that already exists is left alone. It creates the
-# Artifact Registry repository, the Firestore database, two service accounts
+# Artifact Registry repository, the build bucket, the Firestore database, two service accounts
 # (one for the app, one for Cloud Build) with only the roles they need, and the
 # secrets. It asks for the values it cannot generate. Afterwards, connect
 # GitHub to Cloud Build and create the trigger as printed at the end; builds
@@ -20,6 +20,7 @@ REGION="${REGION:-us-west1}"
 SERVICE="hapsearch"
 REPOSITORY="hapsearch"
 FIRESTORE_DATABASE="${FIRESTORE_DATABASE:-hapsearch-db}"
+BUILD_BUCKET="${PROJECT_ID}-hapsearch-build"
 RUNTIME_SA="hapsearch-cloud-run@${PROJECT_ID}.iam.gserviceaccount.com"
 BUILD_SA="hapsearch-cloud-build@${PROJECT_ID}.iam.gserviceaccount.com"
 
@@ -39,7 +40,7 @@ read -r -p "Continue? [y/N] " answer
 step "Enabling APIs"
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
   artifactregistry.googleapis.com secretmanager.googleapis.com \
-  firestore.googleapis.com iam.googleapis.com --project "${PROJECT_ID}"
+  firestore.googleapis.com iam.googleapis.com storage.googleapis.com --project "${PROJECT_ID}"
 
 step "Artifact Registry repository '${REPOSITORY}'"
 if exists gcloud artifacts repositories describe "${REPOSITORY}" --location "${REGION}" --project "${PROJECT_ID}"; then
@@ -54,6 +55,23 @@ else
 POLICY
   gcloud artifacts repositories set-cleanup-policies "${REPOSITORY}" --location "${REGION}" \
     --policy /tmp/hapsearch-cleanup.json --no-dry-run --project "${PROJECT_ID}"
+fi
+
+step "Build bucket gs://${BUILD_BUCKET} (the last published database)"
+# Each build starts from the database the previous build published, so it
+# only imports the species whose data changed (scripts/incremental_build.py).
+if exists gcloud storage buckets describe "gs://${BUILD_BUCKET}" --project "${PROJECT_ID}"; then
+  echo "already exists"
+else
+  gcloud storage buckets create "gs://${BUILD_BUCKET}" --location "${REGION}" \
+    --uniform-bucket-level-access --public-access-prevention --project "${PROJECT_ID}"
+  # Keep the last few published databases, to step back to one if needed.
+  gcloud storage buckets update "gs://${BUILD_BUCKET}" --versioning --project "${PROJECT_ID}"
+  cat > /tmp/hapsearch-bucket-lifecycle.json <<'POLICY'
+{"rule": [{"action": {"type": "Delete"}, "condition": {"numNewerVersions": 3, "isLive": false}}]}
+POLICY
+  gcloud storage buckets update "gs://${BUILD_BUCKET}" \
+    --lifecycle-file /tmp/hapsearch-bucket-lifecycle.json --project "${PROJECT_ID}"
 fi
 
 step "Firestore database '${FIRESTORE_DATABASE}' (user allowlist)"
@@ -87,6 +105,11 @@ grant_project_role "${BUILD_SA}" roles/run.admin
 grant_project_role "${BUILD_SA}" roles/cloudbuild.readTokenAccessor
 grant_project_role "${BUILD_SA}" roles/artifactregistry.writer
 grant_project_role "${BUILD_SA}" roles/logging.logWriter
+# Cloud Build reads and replaces the published database in the build bucket.
+gcloud storage buckets add-iam-policy-binding "gs://${BUILD_BUCKET}" \
+  --member "serviceAccount:${BUILD_SA}" --role roles/storage.objectAdmin \
+  --project "${PROJECT_ID}" --quiet > /dev/null
+echo "${BUILD_SA} -> roles/storage.objectAdmin on gs://${BUILD_BUCKET}"
 gcloud iam service-accounts add-iam-policy-binding "${RUNTIME_SA}" \
   --member "serviceAccount:${BUILD_SA}" --role roles/iam.serviceAccountUser \
   --project "${PROJECT_ID}" --quiet > /dev/null

@@ -80,10 +80,37 @@ the same for the git branch, tag or commit that is fetched.
 
 The pipeline ([cloudbuild.yaml](../cloudbuild.yaml)) fetches every source at its ref,
 builds and checks the database, builds the app image and deploys it. If anything fails,
-nothing is deployed and the build log shows why. A successful run takes roughly 10
-minutes; the new version is live as soon as it finishes. The Cloud Run revision records
-the exact data in `HAPSEARCH_DATA_VERSION` (e.g. `alfalfa=v055/master@1a2b3c4d5e6f`),
-and the database's `build_info` table lists every source, its commit and the files used.
+nothing is deployed and the build log shows why. The new version is live as soon as it
+finishes. The Cloud Run revision records the exact data in `HAPSEARCH_DATA_VERSION`
+(e.g. `alfalfa=v055/master@1a2b3c4d5e6f`), and the database's `build_info` table lists
+every source, its commit and the files used.
+
+### Only changed species are rebuilt
+
+Each run starts from the database the previous successful run published (kept in the
+`PROJECT_ID-hapsearch-build` bucket) and only imports and aligns the species whose input
+files changed. Unchanged species are copied as they are, and a species removed from
+`data_sources.toml` is deleted. The log says which:
+
+```
+=== Reusing /builder/home/previous.db ===
+  Unchanged, kept: Medicago sativa
+  Changed, rebuilt: Carya illinoinensis
+```
+
+So publishing one species takes about as long as building that species, however many
+species HapSearch holds. The result is the same as importing everything from scratch
+([scripts/incremental_build.py](../scripts/incremental_build.py) explains how this is
+guaranteed). The run imports every species instead, and says why, when:
+
+- there is no published database yet (the first run), or `_FULL_REBUILD` is `true`;
+- the build code, the database schema or R's pwalign changed since the last run;
+- a changed species shares a project, an owner contact or a sample name with another
+  species, since those rows depend on which species is imported last.
+
+A run that imports every species can take an hour or more with many species; the
+pipeline allows two hours. Set `_FULL_REBUILD` to `true` for one run to rebuild
+everything on purpose.
 
 ## Check a build on your computer (optional)
 
@@ -93,10 +120,11 @@ From the HapSearch app repository:
 python scripts/build_database.py                            # the pinned versions
 python scripts/build_database.py --versions alfalfa=v056    # try another version
 python scripts/build_database.py --data-repo ../alfalfa_haplotype_db   # a local checkout
+python scripts/build_database.py --reuse data/hapsearch.db  # only rebuild changed species
 ```
 
-This takes about 3 minutes per species and needs read access to the data
-repositories. It writes `data/hapsearch.db` only if every import and check passes, and
+A full build takes a few minutes per species and needs read access to the data
+repositories; with `--reuse` only changed species take time. It writes `data/hapsearch.db` only if every import and check passes, and
 prints how many rows each table gained or lost compared with your previous local build.
 
 The build also needs R with the Bioconductor packages Biostrings and pwalign
@@ -104,7 +132,9 @@ The build also needs R with the Bioconductor packages Biostrings and pwalign
 Debian/Ubuntu). It aligns every microhaplotype to its locus's `Ref_0001` exactly as
 BIGr does (`scripts/align_microhaplotypes.R`), and the Multiple Sequence Alignment
 tab shows those stored alignments. To add them to an existing database without a
-rebuild: `python scripts/align_microhaplotypes.py --db data/hapsearch.db`.
+rebuild: `python scripts/align_microhaplotypes.py --db data/hapsearch.db`
+(add `--missing-only` to align only microhaplotypes that have none). The log
+reports progress every 2,000 alignments.
 
 ## Roll back
 
@@ -117,7 +147,10 @@ previous revision and **Manage traffic → 100%**. Fix the data, then publish ag
   and every data repository linked. Builds read the data repositories through it, so
   there is no token to renew.
 - A Cloud Build trigger on the HapSearch app repository using `cloudbuild.yaml`, with
-  **manual** invocation and the optional substitution `_REFS`.
+  **manual** invocation and the optional substitutions `_VERSIONS`, `_REFS` and
+  `_FULL_REBUILD`.
+- The `PROJECT_ID-hapsearch-build` bucket, which holds the last published database
+  (created by `scripts/setup_cloud_run.sh`; re-run it if the bucket is missing).
 
 ## Adding a species
 
